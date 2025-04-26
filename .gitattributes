@@ -1,0 +1,20 @@
+# Set text files to use LF line endings in the repository
+*.js text eol=lf
+*.jsx text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.json text eol=lf
+*.xml text eol=lf
+*.md text eol=lf
+*.gradle text eol=lf
+*.kt text eol=lf
+*.pro text eol=lf
+*.properties text eol=lf
+
+# Ensure binary files are not modified
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.svg binary

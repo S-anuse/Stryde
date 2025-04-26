@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "322300406862",
+    "project_id": "stryde-24fb4",
+    "storage_bucket": "stryde-24fb4.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:322300406862:android:9042954eb259deaf8e271f",
+        "android_client_info": {
+          "package_name": "com.sanjeevani_27102003.Stryde"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA30HjkfHEb_r13zdGaMF7w3H7hfXfOhj8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
