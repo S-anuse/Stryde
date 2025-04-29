@@ -1,11 +1,11 @@
 import { StyleSheet, View, useColorScheme } from 'react-native';
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import stepCounter from '@/services/stepCounter'; // Verify this path
+import stepCounter from '@/services/stepCounter';
 import { db, auth } from '../../firebase';
-import { collection, doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 
 export default function ActivityScreen() {
@@ -13,93 +13,143 @@ export default function ActivityScreen() {
   const [isShaking, setIsShaking] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
+  const [isInitialized, setIsInitialized] = useState<boolean>(false);
 
   const colorScheme = useColorScheme();
   const backgroundColor = colorScheme === 'dark' ? '#121212' : '#FFFFFF';
   const textColor = colorScheme === 'dark' ? '#FFFFFF' : '#000000';
   const cardBackground = colorScheme === 'dark' ? '#1E1E1E' : '#F8F8F8';
 
+  // Initialize step counter with the user's data
+  const initializeStepCounter = useCallback(async (uid: string) => {
+    try {
+      console.log('Initializing step counter for user:', uid);
+      
+      // First, set the user ID in the step counter service
+      stepCounter.setUserId(uid);
+      
+      // Then get the user's data from Firestore
+      const userDocRef = doc(db, 'users', uid);
+      const docSnap = await getDoc(userDocRef);
+      
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        console.log('Loaded user data from Firestore:', data);
+        
+        // Use the step count from Firestore
+        setCurrentStepCount(data.stepCount || 0);
+      } else {
+        // Create a new user document if it doesn't exist
+        console.log('Creating new user document');
+        await setDoc(userDocRef, { 
+          email: auth.currentUser?.email, 
+          stepCount: 0, 
+          createdAt: new Date().toISOString(),
+          lastUpdated: new Date().toISOString()
+        });
+        setCurrentStepCount(0);
+      }
+      
+      // Start the step counter after initialization
+      if (!stepCounter.pedometerSubscription) {
+        await stepCounter.start();
+        console.log('Step counter started');
+      }
+      
+      setIsInitialized(true);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+      console.error('Failed to initialize step counter:', err);
+      setError(`Failed to initialize step counter: ${errorMessage}`);
+    }
+  }, []);
+
   // Handle user authentication state changes
   useEffect(() => {
+    console.log('Setting up authentication listener');
     const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
       if (user) {
+        console.log('User authenticated:', user.uid);
         setUserId(user.uid);
-
-        // Type check for stepCounter methods
-        if (stepCounter && typeof (stepCounter as any).setUserId === 'function') {
-          (stepCounter as any).setUserId(user.uid); // Safely call setUserId with type assertion
-          console.log('setUserId called successfully for user:', user.uid);
-        } else {
-          console.error('stepCounter.setUserId is not a function. Available methods:', Object.keys(stepCounter));
-          setError('Step counter initialization failed: setUserId not found');
-        }
-
-        const userDocRef = doc(db, 'users', user.uid);
-        const docSnap = await getDoc(userDocRef);
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          setCurrentStepCount(data.stepCount || 0);
-        } else {
-          await setDoc(userDocRef, { email: user.email, stepCount: 0, createdAt: new Date().toISOString() }, { merge: true });
-          setCurrentStepCount(0);
-        }
-
-        if (!(stepCounter as any).pedometerSubscription && typeof (stepCounter as any).start === 'function') {
-          try {
-            await (stepCounter as any).start();
-          } catch (err) {
-            console.error('Failed to start step counter:', err);
-            setError('Failed to initialize step counter');
-          }
-        }
+        
+        // Initialize step counter after authentication
+        await initializeStepCounter(user.uid);
       } else {
+        console.log('User logged out or not authenticated');
         setUserId(null);
         setCurrentStepCount(0);
-        if ((stepCounter as any).pedometerSubscription && typeof (stepCounter as any).stop === 'function') {
-          (stepCounter as any).stop();
+        setIsInitialized(false);
+        
+        // Stop the step counter when logged out
+        if (stepCounter.pedometerSubscription) {
+          stepCounter.stop();
+          console.log('Step counter stopped');
         }
       }
     });
 
-    return () => unsubscribeAuth();
-  }, []);
+    // Cleanup function
+    return () => {
+      console.log('Cleaning up authentication listener');
+      unsubscribeAuth();
+      if (stepCounter.pedometerSubscription) {
+        stepCounter.stop();
+      }
+    };
+  }, [initializeStepCounter]);
 
-  // Subscribe to step counter updates and sync with Firestore
+  // Subscribe to step counter updates and Firestore changes
   useEffect(() => {
-    if (!userId) return;
+    if (!userId || !isInitialized) return;
 
-    const unsubscribe = (stepCounter as any).subscribe((steps: number) => {
-      const userDocRef = doc(db, 'users', userId);
-      setDoc(userDocRef, { stepCount: steps }, { merge: true }).catch((err: Error) =>
-        console.error('Failed to update step count:', err)
-      );
-      setCurrentStepCount(steps); // Update UI with the latest step count
+    console.log('Setting up step counter and Firestore listeners');
+    
+    // Subscribe to step counter updates
+    const stepCounterUnsubscribe = stepCounter.subscribe((steps: number) => {
+      console.log('Step counter update received:', steps);
+      setCurrentStepCount(steps);
     });
 
-    const unsubscribeFirestore = onSnapshot(doc(db, 'users', userId), (docSnap) => {
+    // Subscribe to Firestore updates for real-time sync
+    const firestoreUnsubscribe = onSnapshot(doc(db, 'users', userId), (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
-        setCurrentStepCount(data.stepCount || 0);
+        console.log('Firestore sync update:', data.stepCount);
+        
+        // Only update the UI if the Firestore count is higher
+        // This prevents overwriting local step count with older data
+        if (data.stepCount > currentStepCount) {
+          setCurrentStepCount(data.stepCount);
+        }
       }
     }, (err) => {
       console.error('Firestore listen error:', err);
-      setError('Failed to sync step count');
+      setError('Failed to sync step count from Firestore');
     });
 
-    return () => {
-      if (unsubscribe && typeof unsubscribe === 'function') unsubscribe();
-      if (unsubscribeFirestore && typeof unsubscribeFirestore === 'function') unsubscribeFirestore();
-    };
-  }, [userId]);
-
-  // Subscribe to shaking state
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setIsShaking((stepCounter as any).isShaking);
+    // Monitor shaking state
+    const shakingInterval = setInterval(() => {
+      setIsShaking(stepCounter.isShaking);
     }, 100);
 
-    return () => clearInterval(interval);
-  }, []);
+    // Cleanup function
+    return () => {
+      console.log('Cleaning up step counter and Firestore listeners');
+      stepCounterUnsubscribe();
+      firestoreUnsubscribe();
+      clearInterval(shakingInterval);
+    };
+  }, [userId, isInitialized, currentStepCount]);
+
+  // Force save data before component unmounts
+  useEffect(() => {
+    return () => {
+      if (userId && stepCounter.currentStepCount > 0) {
+        console.log('Saving step data on component unmount');
+        stepCounter.saveData();
+      }
+    };
+  }, [userId]);
 
   // Calculate step metrics
   const calculateDistance = () => {
@@ -147,7 +197,9 @@ export default function ActivityScreen() {
                     ]}
                   />
                 </View>
-                <ThemedText style={[styles.progressText, { color: textColor }]}>---- Steps 10000 Steps</ThemedText>
+                <ThemedText style={[styles.progressText, { color: textColor }]}>
+                  Goal: 10,000 Steps
+                </ThemedText>
               </ThemedView>
 
               <View style={styles.metricsRow}>

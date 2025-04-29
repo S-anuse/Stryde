@@ -2,7 +2,7 @@ import { Pedometer } from 'expo-sensors';
 import { Accelerometer } from 'expo-sensors';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { db, auth } from '../firebase';
-import { doc, setDoc, getDoc } from 'firebase/firestore';
+import { doc, setDoc, getDoc, updateDoc } from 'firebase/firestore';
 
 // Change keys to be user-specific
 const getStepCountKey = (userId) => `pedometer_step_count_${userId}`;
@@ -29,24 +29,33 @@ class StepCounter {
     this.userId = null; // Track current user ID
     this.saveInterval = null;
     this.shakeTimeout = null;
+    this.dataLoaded = false; // Flag to track if data has been loaded
+    this.savePending = false; // Flag to prevent concurrent saves
   }
 
   setUserId(userId) {
+    console.log('Setting user ID in step counter:', userId);
     const oldUserId = this.userId;
     this.userId = userId;
 
     if (userId && (oldUserId !== userId || !oldUserId)) {
+      // Reset state for new user
       this.initialStepCount = null;
       this.lastProcessedStep = 0;
       this.currentStepCount = 0;
       this.lastSavedStepCount = 0;
       this.stepBuffer = 0;
       this.sessionStartTime = Date.now();
-      this.loadSavedData();
-      if (this.pedometerSubscription) {
-        this.stop();
-        this.start();
-      }
+      this.dataLoaded = false; // Reset data loaded flag
+      
+      // Load data for the new user
+      this.loadSavedData().then(() => {
+        console.log('Data loaded for user:', userId);
+        this.dataLoaded = true;
+        this.notifyListeners();
+      }).catch(err => {
+        console.error('Failed to load data for user:', userId, err);
+      });
     }
   }
 
@@ -55,9 +64,11 @@ class StepCounter {
   }
 
   subscribe(listener) {
+    console.log('Subscribing to step counter updates');
     this.listeners.push(listener);
     listener(this.currentStepCount);
     return () => {
+      console.log('Unsubscribing from step counter updates');
       this.listeners = this.listeners.filter((l) => l !== listener);
     };
   }
@@ -69,75 +80,125 @@ class StepCounter {
     }
 
     try {
-      const savedStepCount = await AsyncStorage.getItem(getStepCountKey(this.userId));
-      const lastResetTime = await AsyncStorage.getItem(getLastResetTimeKey(this.userId));
+      console.log('Loading saved data for user:', this.userId);
+      
+      // First, try to get data from Firestore
       const userDocRef = doc(db, 'users', this.userId);
       const docSnap = await getDoc(userDocRef);
 
       if (docSnap.exists()) {
         const data = docSnap.data();
-        const firestoreStepCount = data.stepCount || 0;
-        this.currentStepCount = firestoreStepCount;
-        this.lastSavedStepCount = firestoreStepCount;
+        console.log('Loaded data from Firestore:', data);
+        
+        // Set current step count from Firestore
+        this.currentStepCount = data.stepCount || 0;
+        this.lastSavedStepCount = data.stepCount || 0;
       } else {
+        // If no document exists, create one
+        console.log('No document exists, creating one');
         this.currentStepCount = 0;
         this.lastSavedStepCount = 0;
-        await setDoc(userDocRef, { stepCount: 0, lastUpdated: new Date().toISOString() }, { merge: true });
+        await setDoc(userDocRef, { 
+          email: auth.currentUser?.email || 'unknown', 
+          stepCount: 0, 
+          lastUpdated: new Date().toISOString() 
+        }, { merge: true });
       }
+
+      // Also check AsyncStorage for any unsaved data or timestamps
+      const savedStepCount = await AsyncStorage.getItem(getStepCountKey(this.userId));
+      const lastResetTime = await AsyncStorage.getItem(getLastResetTimeKey(this.userId));
 
       if (savedStepCount && lastResetTime) {
         const parsedStepCount = parseInt(savedStepCount, 10);
         const parsedResetTime = parseInt(lastResetTime, 10);
-        if (!isNaN(parsedStepCount)) {
-          this.sessionStartTime = parsedResetTime || Date.now();
+        
+        if (!isNaN(parsedStepCount) && parsedStepCount > this.currentStepCount) {
+          console.log('Found higher step count in AsyncStorage, using it:', parsedStepCount);
+          this.currentStepCount = parsedStepCount;
+          // Update Firestore with the higher count from AsyncStorage
+          this.saveData(true);
         }
-      } else {
-        this.sessionStartTime = Date.now();
+        
+        if (!isNaN(parsedResetTime)) {
+          this.sessionStartTime = parsedResetTime;
+        }
       }
 
+      // Save the loaded step count to AsyncStorage as well
       await AsyncStorage.setItem(getStepCountKey(this.userId), this.currentStepCount.toString());
       await AsyncStorage.setItem(getLastResetTimeKey(this.userId), this.sessionStartTime.toString());
+      
+      console.log('Completed loading data, current step count:', this.currentStepCount);
       this.notifyListeners();
     } catch (err) {
       console.error('Error loading saved data:', err);
+      throw err; // Re-throw to handle in calling function
     }
   }
 
-  async saveData() {
+  async saveData(force = false) {
     if (!this.userId) {
       console.log('No user ID available, cannot save data');
       return;
     }
 
-    const now = new Date();
-    const today = now.toISOString().split('T')[0];
+    if (this.savePending && !force) {
+      console.log('Save already pending, skipping');
+      return;
+    }
+
+    this.savePending = true;
 
     try {
+      console.log('Saving data for user:', this.userId, 'current steps:', this.currentStepCount);
+      const now = new Date();
+      const today = now.toISOString().split('T')[0];
+
+      // Save to AsyncStorage (local cache)
+      await AsyncStorage.setItem(getStepCountKey(this.userId), this.currentStepCount.toString());
+      await AsyncStorage.setItem(getLastResetTimeKey(this.userId), this.sessionStartTime.toString());
+
+      // Handle day change logic (daily rollover)
       const lastReset = new Date(this.sessionStartTime);
       const lastResetDay = lastReset.toISOString().split('T')[0];
 
       if (today !== lastResetDay && this.lastSavedStepCount > 0) {
+        console.log('Day change detected, saving historic data for:', lastResetDay);
+        // Save previous day's data to history collection
         const docRef = doc(db, 'users', this.userId, 'step_data', lastResetDay);
-        await setDoc(docRef, { date: lastResetDay, steps: this.lastSavedStepCount }, { merge: true });
-        console.log('Data saved to Firestore for user:', this.userId, 'date:', lastResetDay);
-
+        await setDoc(docRef, { 
+          date: lastResetDay, 
+          steps: this.lastSavedStepCount,
+          lastUpdated: now.toISOString() 
+        }, { merge: true });
+        
+        // Reset for new day
         this.sessionStartTime = now.getTime();
         this.lastSavedStepCount = 0;
         this.currentStepCount = 0;
         this.initialStepCount = null;
         this.lastProcessedStep = 0;
+        
+        // Notify listeners of reset
         this.notifyListeners();
       }
 
+      // Update the user document with current step count
       const userDocRef = doc(db, 'users', this.userId);
-      await setDoc(userDocRef, { stepCount: this.currentStepCount, lastUpdated: now.toISOString() }, { merge: true });
+      await updateDoc(userDocRef, { 
+        stepCount: this.currentStepCount, 
+        lastUpdated: now.toISOString() 
+      });
 
-      await AsyncStorage.setItem(getStepCountKey(this.userId), this.currentStepCount.toString());
-      await AsyncStorage.setItem(getLastResetTimeKey(this.userId), this.sessionStartTime.toString());
-
+      console.log('Data saved successfully to Firestore and AsyncStorage');
       this.lastSavedStepCount = this.currentStepCount;
     } catch (err) {
       console.error('Error saving step count:', err);
+      // Even if Firestore fails, ensure we keep the local copy
+      await AsyncStorage.setItem(getStepCountKey(this.userId), this.currentStepCount.toString());
+    } finally {
+      this.savePending = false;
     }
   }
 
@@ -242,11 +303,16 @@ class StepCounter {
   }
 
   async start() {
+    console.log('Starting step counter');
     this.userId = auth.currentUser ? auth.currentUser.uid : null;
 
     if (!this.userId) {
       console.log('No user logged in, steps will not be saved to Firestore');
-    } else {
+      return;
+    }
+
+    if (!this.dataLoaded) {
+      console.log('Data not loaded yet, loading now');
       await this.loadSavedData();
     }
 
@@ -262,13 +328,17 @@ class StepCounter {
       return;
     }
 
+    // Reset step counter tracking variables
     this.initialStepCount = null;
     this.lastProcessedStep = 0;
     this.lastStepTime = Date.now();
     this.stepBuffer = 0;
 
+    // Start watching for new steps
     this.pedometerSubscription = Pedometer.watchStepCount(this.handleStepDetected.bind(this));
+    console.log('Pedometer subscription created');
 
+    // Initialize accelerometer for shake detection
     const accelerometerAvailable = await Accelerometer.isAvailableAsync();
     if (!accelerometerAvailable) {
       console.error('Accelerometer not available');
@@ -282,24 +352,41 @@ class StepCounter {
       this.accelerometerData = data;
       this.detectShake();
     });
+    console.log('Accelerometer subscription created');
 
+    // Set up auto-save interval
     this.saveInterval = setInterval(() => this.checkAndSaveData(), 5000); // Every 5 seconds
+    console.log('Save interval created');
   }
 
   stop() {
+    console.log('Stopping step counter');
+    
+    // Force a final save
+    if (this.userId && this.currentStepCount > 0) {
+      console.log('Saving final step count:', this.currentStepCount);
+      this.saveData(true);
+    }
+    
+    // Clean up subscriptions
     if (this.pedometerSubscription) {
       this.pedometerSubscription.remove();
       this.pedometerSubscription = null;
+      console.log('Pedometer subscription removed');
     }
     if (this.accelerometerSubscription) {
       this.accelerometerSubscription.remove();
       this.accelerometerSubscription = null;
+      console.log('Accelerometer subscription removed');
     }
     if (this.shakeTimeout) {
       clearTimeout(this.shakeTimeout);
+      this.shakeTimeout = null;
     }
     if (this.saveInterval) {
       clearInterval(this.saveInterval);
+      this.saveInterval = null;
+      console.log('Save interval cleared');
     }
   }
 }
