@@ -25,7 +25,7 @@ const DAILY_CHALLENGES = [
 export default function PushUpGoal() {
   const [pushUps, setPushUps] = useState<number>(0);
   const [totalPushUps, setTotalPushUps] = useState<number>(0);
-  const [streak, setStreak] = useState<number>(0);
+  const [longestStreak, setLongestStreak] = useState<number>(0); // Renamed from streak
   const [tier, setTier] = useState<string>(TIERS.BEGINNER.name);
   const [challenge, setChallenge] = useState(DAILY_CHALLENGES[0]);
   const [isChallengeCompleted, setIsChallengeCompleted] = useState<boolean>(false);
@@ -52,7 +52,10 @@ export default function PushUpGoal() {
   }, [totalPushUps]);
 
   const loadPushUpData = async () => {
-    if (!userId) return;
+    if (!userId) {
+      Alert.alert('Error', 'User not authenticated. Please log in.');
+      return;
+    }
 
     try {
       const goalRef = doc(db, 'users', userId, 'goals', '5');
@@ -61,7 +64,7 @@ export default function PushUpGoal() {
       if (goalDoc.exists()) {
         const data = goalDoc.data();
         setTotalPushUps(data.pushUps || 0);
-        setStreak(data.streak || 0);
+        setLongestStreak(data.longestStreak || 0); // Updated to longestStreak
         setTier(data.tier || TIERS.BEGINNER.name);
         setIsChallengeCompleted(data.isChallengeCompleted || false);
 
@@ -71,10 +74,11 @@ export default function PushUpGoal() {
       } else {
         await setDoc(goalRef, {
           pushUps: 0,
-          streak: 0,
+          longestStreak: 0, // Updated to longestStreak
           tier: TIERS.BEGINNER.name,
           isChallengeCompleted: false,
           dailyPushUps: [],
+          userId,
         });
       }
     } catch (error) {
@@ -107,7 +111,10 @@ export default function PushUpGoal() {
   };
 
   const savePushUpData = async () => {
-    if (!userId) return;
+    if (!userId) {
+      Alert.alert('Error', 'User not authenticated. Please log in.');
+      return;
+    }
 
     try {
       const goalRef = doc(db, 'users', userId, 'goals', '5');
@@ -127,7 +134,7 @@ export default function PushUpGoal() {
       }
 
       const isNewDay = lastLoggedDate !== dateString;
-      const newStreak = isNewDay ? streak + 1 : streak;
+      const newLongestStreak = isNewDay ? longestStreak + 1 : longestStreak;
 
       const existingDayIndex = dailyPushUps.findIndex((d) => d.day === today);
       if (existingDayIndex >= 0) {
@@ -142,15 +149,16 @@ export default function PushUpGoal() {
 
       await updateDoc(goalRef, {
         pushUps: totalPushUps,
-        streak: newStreak,
+        longestStreak: newLongestStreak, // Updated to longestStreak
         tier,
         isChallengeCompleted,
         lastLoggedDate: dateString,
         dailyPushUps,
+        userId,
       });
 
       setWeeklyData(formatWeeklyData(dailyPushUps));
-      setStreak(newStreak);
+      setLongestStreak(newLongestStreak);
 
       if (totalPushUps >= 50) {
         setIsModalVisible(true);
@@ -201,7 +209,10 @@ export default function PushUpGoal() {
   };
 
   const handleResetProgress = async () => {
-    if (!userId) return;
+    if (!userId) {
+      Alert.alert('Error', 'User not authenticated. Please log in.');
+      return;
+    }
 
     Alert.alert(
       'Reset Progress',
@@ -216,16 +227,17 @@ export default function PushUpGoal() {
               const goalRef = doc(db, 'users', userId, 'goals', '5');
               await setDoc(goalRef, {
                 pushUps: 0,
-                streak: 0,
+                longestStreak: 0,
                 tier: TIERS.BEGINNER.name,
                 isChallengeCompleted: false,
                 dailyPushUps: [],
                 lastLoggedDate: '',
+                userId,
               });
 
               setPushUps(0);
               setTotalPushUps(0);
-              setStreak(0);
+              setLongestStreak(0);
               setTier(TIERS.BEGINNER.name);
               setIsChallengeCompleted(false);
               setWeeklyData(formatWeeklyData([]));
@@ -285,7 +297,7 @@ export default function PushUpGoal() {
         <View style={styles.progressBarContainer}>
           <View style={[styles.progressBar, { width: `${getTierProgress()}%` }]} />
         </View>
-        <Text style={styles.streakText}>🔥 {streak} Day Streak</Text>
+        <Text style={styles.streakText}>🔥 {longestStreak} Day Streak</Text> {/* Updated to longestStreak */}
       </View>
 
       <View style={styles.statsContainer}>

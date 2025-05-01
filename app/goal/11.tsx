@@ -4,6 +4,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialIcons } from '@expo/vector-icons';
 import Svg, { Circle } from 'react-native-svg';
+import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
+import { db, auth } from '../../firebase';
 
 // Types
 type PlankVariation = 'regular' | 'side' | 'elevated';
@@ -23,6 +25,17 @@ interface PlankTrackerData {
   longestStreak?: number;
   achievements?: AchievementId[];
 }
+
+// Helper function to remove undefined fields
+const cleanData = (data: Record<string, any>): Record<string, any> => {
+  const cleaned: Record<string, any> = {};
+  Object.keys(data).forEach((key) => {
+    if (data[key] !== undefined) {
+      cleaned[key] = data[key];
+    }
+  });
+  return cleaned;
+};
 
 // Create animated circle component
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
@@ -114,15 +127,31 @@ export default function PlankTracker() {
 
   // Load data from storage
   const loadData = async () => {
+    const userId = auth.currentUser?.uid;
+    if (!userId) {
+      Alert.alert('Error', 'User not authenticated. Please log in.');
+      return;
+    }
+
     try {
-      const savedData = await AsyncStorage.getItem('plankTrackerData');
-      if (savedData) {
-        const data: PlankTrackerData = JSON.parse(savedData);
+      const goalRef = doc(db, 'users', userId, 'goals', '11');
+      const goalDoc = await getDoc(goalRef);
+
+      if (goalDoc.exists()) {
+        const data: PlankTrackerData = goalDoc.data() as PlankTrackerData;
         setPlankTime(data.plankTime || 0);
         setVariation(data.variation || 'regular');
         setLastPlank(data.lastPlank || null);
         setLongestStreak(data.longestStreak || 0);
         setAchievements(data.achievements || []);
+      } else {
+        await setDoc(goalRef, {
+          plankTime: 0,
+          variation: 'regular',
+          lastPlank: null,
+          longestStreak: 0,
+          achievements: [],
+        });
       }
     } catch (error) {
       console.log('Error loading plank data:', error);
@@ -131,6 +160,12 @@ export default function PlankTracker() {
 
   // Save data to storage
   const saveData = async (data: Partial<PlankTrackerData> = {}) => {
+    const userId = auth.currentUser?.uid;
+    if (!userId) {
+      Alert.alert('Error', 'User not authenticated. Please log in.');
+      return;
+    }
+
     try {
       const currentData: PlankTrackerData = {
         plankTime,
@@ -141,7 +176,9 @@ export default function PlankTracker() {
         ...data
       };
       
-      await AsyncStorage.setItem('plankTrackerData', JSON.stringify(currentData));
+      const cleanedData = cleanData(currentData);
+      const goalRef = doc(db, 'users', userId, 'goals', '11');
+      await updateDoc(goalRef, cleanedData);
     } catch (error) {
       console.log('Error saving plank data:', error);
     }
@@ -269,46 +306,45 @@ export default function PlankTracker() {
   };
 
   // Render the circular progress indicator
-  // Update the renderProgressCircle function to remove targetText
-const renderProgressCircle = (currentTarget: number = targetTime) => {
-  const size = 200;
-  const strokeWidth = 15;
-  const radius = (size - strokeWidth) / 2;
-  const circumference = radius * 2 * Math.PI;
-  const strokeDashoffset = progressAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [circumference, 0],
-  });
+  const renderProgressCircle = (currentTarget: number = targetTime) => {
+    const size = 200;
+    const strokeWidth = 15;
+    const radius = (size - strokeWidth) / 2;
+    const circumference = radius * 2 * Math.PI;
+    const strokeDashoffset = progressAnim.interpolate({
+      inputRange: [0, 1],
+      outputRange: [circumference, 0],
+    });
 
-  return (
-    <View style={styles.progressCircleContainer}>
-      <Svg width={size} height={size} style={styles.progressCircle}>
-        <Circle
-          stroke="#E0F7FA"
-          fill="none"
-          cx={size / 2}
-          cy={size / 2}
-          r={radius}
-          strokeWidth={strokeWidth}
-        />
-        <AnimatedCircle
-          stroke="#0277BD"
-          fill="none"
-          cx={size / 2}
-          cy={size / 2}
-          r={radius}
-          strokeWidth={strokeWidth}
-          strokeDasharray={circumference}
-          strokeDashoffset={strokeDashoffset}
-          strokeLinecap="round"
-        />
-      </Svg>
-      <Animated.View style={styles.progressTextContainer}>
-        <Text style={styles.timerText}>{formatTime(plankTime)}</Text>
-      </Animated.View>
-    </View>
-  );
-};
+    return (
+      <View style={styles.progressCircleContainer}>
+        <Svg width={size} height={size} style={styles.progressCircle}>
+          <Circle
+            stroke="#E0F7FA"
+            fill="none"
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            strokeWidth={strokeWidth}
+          />
+          <AnimatedCircle
+            stroke="#0277BD"
+            fill="none"
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            strokeWidth={strokeWidth}
+            strokeDasharray={circumference}
+            strokeDashoffset={strokeDashoffset}
+            strokeLinecap="round"
+          />
+        </Svg>
+        <Animated.View style={styles.progressTextContainer}>
+          <Text style={styles.timerText}>{formatTime(plankTime)}</Text>
+        </Animated.View>
+      </View>
+    );
+  };
   // Calculate beginner target based on current plankTime
   const getBeginnerTarget = () => {
     const beginnerSteps = [
@@ -414,10 +450,6 @@ const renderProgressCircle = (currentTarget: number = targetTime) => {
                 </TouchableOpacity>
               )}
             </View>
-            
-          
-            
-          
             
             <TouchableOpacity 
               style={styles.helpButton} 
@@ -787,10 +819,6 @@ const styles = StyleSheet.create({
     width: '90%',
     backgroundColor: '#4CAF50',
   },
-  // secondaryButton: {
-  //   backgroundColor: '#90CAF9',
-  //   marginTop: 10,
-  // },
   // Advanced Mode
   advancedContainer: {
     width: '90%',
@@ -834,7 +862,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     elevation: 5,
-    shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
     shadowRadius: 3.84,

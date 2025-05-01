@@ -1,18 +1,18 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TouchableOpacity, Image, Animated, StyleSheet, Vibration, Dimensions, Alert, ScrollView } from 'react-native';
+import { View, Text, TouchableOpacity, Image, Animated, StyleSheet, Vibration, Alert, ScrollView, Dimensions } from 'react-native'; // Added Dimensions import
 import { LinearGradient } from 'expo-linear-gradient';
 import LottieView from 'lottie-react-native';
 import * as Haptics from 'expo-haptics';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { doc, getDoc, updateDoc, setDoc } from 'firebase/firestore';
+import { db, auth } from '../../firebase';
 import { FontAwesome5 } from '@expo/vector-icons';
 import { ACHIEVEMENTS } from '../../constants/achievements';
 
 const dropImage = require('../../assets/drop.png');
 const waterDropAnimation = require('../../assets/water-drop.json');
 const celebrationAnimation = require('../../assets/celebration.json');
-const { width } = Dimensions.get('window');
+const { width } = Dimensions.get('window'); // Now this will work with the import
 
-// Extend ACHIEVEMENTS to include the new 4th achievement
 const ACHIEVEMENTS_WITH_NEW = {
   ...ACHIEVEMENTS,
   HYDRATION_MASTER: 'hydration_master',
@@ -21,12 +21,15 @@ const ACHIEVEMENTS_WITH_NEW = {
 export default function WaterChallenge() {
   const [waterCount, setWaterCount] = useState(0);
   const [showBadge, setShowBadge] = useState(false);
-  const [streak, setStreak] = useState(0);
-  const [lastDrink, setLastDrink] = useState<string | null>(null); // Explicitly type as string | null
-  const [goal, setGoal] = useState(3000); // Default 3 liters
-  const [glassSize, setGlassSize] = useState(250); // Default 250ml
+  const [longestStreak, setLongestStreak] = useState(0);
+  const [lastDrink, setLastDrink] = useState<string | null>(null);
+  const [goal, setGoal] = useState(3000);
+  const [glassSize, setGlassSize] = useState(250);
   const [showAnimation, setShowAnimation] = useState(false);
-  const [achievements, setAchievements] = useState<Array<'first_glass' | 'halfway' | 'daily_goal' | 'three_day_streak' | 'hydration_master'>>([]);
+  const [achievements, setAchievements] = useState<
+    Array<'first_glass' | 'halfway' | 'daily_goal' | 'three_day_streak' | 'hydration_master'>
+  >([]);
+  const userId = auth.currentUser?.uid;
 
   const scaleAnim = useRef(new Animated.Value(0)).current;
   const fillAnim = useRef(new Animated.Value(0)).current;
@@ -53,18 +56,34 @@ export default function WaterChallenge() {
   }, [waterCount]);
 
   const loadData = async () => {
+    if (!userId) {
+      Alert.alert('Error', 'User not authenticated. Please log in.');
+      return;
+    }
+
     try {
-      const savedData = await AsyncStorage.getItem('waterChallengeData');
-      if (savedData) {
-        const data = JSON.parse(savedData);
+      const goalRef = doc(db, 'users', userId, 'goals', '7');
+      const goalDoc = await getDoc(goalRef);
+
+      if (goalDoc.exists()) {
+        const data = goalDoc.data();
         setWaterCount(data.waterCount || 0);
-        setStreak(data.streak || 0);
-        setLastDrink(data.lastDrink); // Can be null or string
+        setLongestStreak(data.longestStreak || 0);
+        setLastDrink(data.lastDrink || null);
         setGoal(data.goal || 3000);
         setAchievements(data.achievements || []);
 
         const progress = (data.waterCount * glassSize) / (data.goal || 3000);
         fillAnim.setValue(progress > 1 ? 1 : progress);
+      } else {
+        await setDoc(goalRef, {
+          waterCount: 0,
+          longestStreak: 0,
+          lastDrink: null,
+          goal: 3000,
+          achievements: [],
+          userId,
+        });
       }
     } catch (error) {
       console.log('Error loading data:', error);
@@ -72,15 +91,21 @@ export default function WaterChallenge() {
   };
 
   const saveData = async () => {
+    if (!userId) {
+      Alert.alert('Error', 'User not authenticated. Please log in.');
+      return;
+    }
+
     try {
+      const goalRef = doc(db, 'users', userId, 'goals', '7');
       const now = new Date().toISOString();
-      await AsyncStorage.setItem('waterChallengeData', JSON.stringify({
+      await updateDoc(goalRef, {
         waterCount,
-        streak,
+        longestStreak,
         lastDrink: now,
         goal,
         achievements,
-      }));
+      });
     } catch (error) {
       console.log('Error saving data:', error);
     }
@@ -88,29 +113,31 @@ export default function WaterChallenge() {
 
   const checkForNewDay = () => {
     if (!lastDrink) {
-      setLastDrink(new Date().toISOString()); // Initialize lastDrink if null
+      setLastDrink(new Date().toISOString());
       return;
     }
 
     const lastDate = new Date(lastDrink);
     const today = new Date();
 
-    if (lastDate.getDate() !== today.getDate() || 
-        lastDate.getMonth() !== today.getMonth() || 
-        lastDate.getFullYear() !== today.getFullYear()) {
-      // Reset everything for a fresh start on a new day
+    if (
+      lastDate.getDate() !== today.getDate() ||
+      lastDate.getMonth() !== today.getMonth() ||
+      lastDate.getFullYear() !== today.getFullYear()
+    ) {
       setWaterCount(0);
-      setStreak(0); // Reset streak if day is skipped
+      setLongestStreak(0);
       setAchievements([]);
       fillAnim.setValue(0);
       setShowBadge(false);
-      setLastDrink(today.toISOString()); // Update lastDrink to today
-    } else if (lastDate.getDate() === today.getDate() - 1 && 
-               lastDate.getMonth() === today.getMonth() && 
-               lastDate.getFullYear() === today.getFullYear()) {
-      // Increment streak if used on the next day
-      setStreak(prev => prev + 1);
-      setLastDrink(today.toISOString()); // Update lastDrink to today
+      setLastDrink(today.toISOString());
+    } else if (
+      lastDate.getDate() === today.getDate() - 1 &&
+      lastDate.getMonth() === today.getMonth() &&
+      lastDate.getFullYear() === today.getFullYear()
+    ) {
+      setLongestStreak((prev) => prev + 1);
+      setLastDrink(today.toISOString());
     }
   };
 
@@ -128,15 +155,16 @@ export default function WaterChallenge() {
 
     if (waterAmount >= goal && !achievements.includes('daily_goal')) {
       newAchievements.push('daily_goal');
-      if (streak === 2 && !achievements.includes('three_day_streak')) {
+      if (longestStreak === 2 && !achievements.includes('three_day_streak')) {
         newAchievements.push('three_day_streak');
       }
-      if (streak === 4 && !achievements.includes('hydration_master')) {
+      if (longestStreak === 4 && !achievements.includes('hydration_master')) {
         newAchievements.push('hydration_master');
       }
     }
 
     setAchievements(newAchievements);
+    saveData();
   };
 
   const addGlass = () => {
@@ -154,7 +182,7 @@ export default function WaterChallenge() {
 
     const waterAmount = waterCount * glassSize;
     if (waterAmount >= goal) {
-      Alert.alert("Goal Achieved!", "No more increments needed today.");
+      Alert.alert('Goal Achieved!', 'No more increments needed today.');
       return;
     }
 
@@ -165,7 +193,6 @@ export default function WaterChallenge() {
 
     if (newCount * glassSize >= goal && !showBadge) {
       setShowBadge(true);
-      // Streak increment is handled in checkForNewDay, not here
 
       if (celebrationRef.current) {
         celebrationRef.current.play();
@@ -192,9 +219,10 @@ export default function WaterChallenge() {
   const resetCount = () => {
     setWaterCount(0);
     setShowBadge(false);
-    setStreak(0);
+    setLongestStreak(0);
     setAchievements([]);
     scaleAnim.setValue(0);
+    saveData();
   };
 
   const progress = (waterCount * glassSize) / goal;
@@ -203,28 +231,24 @@ export default function WaterChallenge() {
   const renderAchievementBadge = (type: 'first_glass' | 'halfway' | 'daily_goal' | 'three_day_streak' | 'hydration_master') => {
     const isUnlocked = achievements.includes(type);
     const icons = {
-      'first_glass': "tint",
-      'halfway': "flag-checkered",
-      'daily_goal': "trophy",
-      'three_day_streak': "fire",
-      'hydration_master': "crown",
+      'first_glass': 'tint',
+      'halfway': 'flag-checkered',
+      'daily_goal': 'trophy',
+      'three_day_streak': 'fire',
+      'hydration_master': 'crown',
     };
 
     const names = {
-      'first_glass': "First Sip",
-      'halfway': "Halfway There",
-      'daily_goal': "Goal Crusher",
-      'three_day_streak': "On Fire",
-      'hydration_master': "Hydration Master",
+      'first_glass': 'First Sip',
+      'halfway': 'Halfway There',
+      'daily_goal': 'Goal Crusher',
+      'three_day_streak': 'On Fire',
+      'hydration_master': 'Hydration Master',
     };
 
     return (
       <View style={[styles.achievementBadge, !isUnlocked && styles.lockedBadge]}>
-        <FontAwesome5 
-          name={icons[type]} 
-          size={24} 
-          color={isUnlocked ? "#2196F3" : "#ccc"} 
-        />
+        <FontAwesome5 name={icons[type]} size={24} color={isUnlocked ? '#2196F3' : '#ccc'} />
         <Text style={[styles.badgeName, !isUnlocked && styles.lockedText]}>
           {names[type]}
         </Text>
@@ -233,11 +257,11 @@ export default function WaterChallenge() {
   };
 
   const getMotivationalMessage = () => {
-    if (progress >= 1) return "Excellent job! You've hit your daily goal!";
-    if (progress >= 0.75) return "Almost there! Keep going strong!";
-    if (progress >= 0.5) return "Halfway there! You're doing great!";
-    if (progress >= 0.25) return "Good start! Keep drinking!";
-    return "Time to hydrate! Your body will thank you.";
+    if (progress >= 1) return 'Excellent job! You\'ve hit your daily goal!';
+    if (progress >= 0.75) return 'Almost there! Keep going strong!';
+    if (progress >= 0.5) return 'Halfway there! You\'re doing great!';
+    if (progress >= 0.25) return 'Good start! Keep drinking!';
+    return 'Time to hydrate! Your body will thank you.';
   };
 
   return (
@@ -246,70 +270,70 @@ export default function WaterChallenge() {
         colors={['#E0F7FA', '#B2EBF2', '#80DEEA']}
         style={styles.background}
       />
-      
+
       <View style={styles.headerContainer}>
         <Image source={dropImage} style={styles.image} />
         <Text style={styles.title}>Hydration Challenge</Text>
       </View>
-      
+
       <View style={styles.statsContainer}>
         <View style={styles.statBox}>
           <Text style={styles.statLabel}>Today</Text>
           <Text style={styles.statValue}>{waterCount * glassSize}ml</Text>
           <Text style={styles.statSubtext}>of {goal}ml</Text>
         </View>
-        
+
         <View style={styles.statBox}>
           <Text style={styles.statLabel}>Streak</Text>
-          <Text style={styles.statValue}>{streak}</Text>
+          <Text style={styles.statValue}>{longestStreak}</Text>
           <Text style={styles.statSubtext}>days</Text>
         </View>
-        
+
         <View style={styles.statBox}>
           <Text style={styles.statLabel}>Left</Text>
           <Text style={styles.statValue}>{glassesLeft}</Text>
           <Text style={styles.statSubtext}>glasses</Text>
         </View>
       </View>
-      
+
       <Text style={styles.motivationText}>{getMotivationalMessage()}</Text>
-      
+
       <View style={styles.progressBarContainer}>
         <View style={styles.progressBar}>
-          <Animated.View 
+          <Animated.View
             style={[
-              styles.progressFill, 
+              styles.progressFill,
               { width: fillAnim.interpolate({
                 inputRange: [0, 1],
-                outputRange: ['0%', '100%']
-              }) }
-            ]} 
+                outputRange: ['0%', '100%'],
+              }) },
+            ]}
           />
         </View>
         <View style={styles.progressMarkersContainer}>
           {[0.25, 0.5, 0.75, 1].map((marker, index) => (
-            <View 
+            <View
               key={index}
               style={[
                 styles.progressMarker,
                 { left: `${marker * 100}%` },
-                progress >= marker && styles.achievedMarker
+                progress >= marker && styles.achievedMarker,
               ]}
             />
           ))}
         </View>
       </View>
-      
+
       {showBadge && (
-        <Animated.View 
+        <Animated.View
           style={[
-            styles.badge, 
-            { transform: [{ scale: scaleAnim }] }
+            styles.badge,
+            { transform: [{ scale: scaleAnim }] },
           ]}
         >
           <Text style={styles.badgeText}>Water Warrior!</Text>
           <Text style={styles.badgeSubtext}>Daily Goal Achieved</Text>
-          
+
           {celebrationRef && (
             <LottieView
               ref={celebrationRef}
@@ -321,8 +345,8 @@ export default function WaterChallenge() {
           )}
         </Animated.View>
       )}
-      
-      <TouchableOpacity 
+
+      <TouchableOpacity
         style={styles.addButton}
         onPress={addGlass}
         activeOpacity={0.7}
@@ -335,7 +359,7 @@ export default function WaterChallenge() {
           <Text style={styles.buttonText}>Add Glass ({glassSize}ml)</Text>
         </LinearGradient>
       </TouchableOpacity>
-      
+
       {showAnimation && lottieRef && (
         <View style={StyleSheet.absoluteFill} pointerEvents="none">
           <LottieView
@@ -347,35 +371,35 @@ export default function WaterChallenge() {
           />
         </View>
       )}
-      
-      <Animated.View 
+
+      <Animated.View
         style={[
           styles.floatingDrop,
           {
             transform: [
-              { 
+              {
                 translateY: dropAnim.interpolate({
                   inputRange: [0, 1],
-                  outputRange: [0, 100]
-                })
+                  outputRange: [0, 100],
+                }),
               },
               {
                 scale: dropAnim.interpolate({
                   inputRange: [0, 0.5, 1],
-                  outputRange: [1, 1.2, 0]
-                })
-              }
+                  outputRange: [1, 1.2, 0],
+                }),
+              },
             ],
             opacity: dropAnim.interpolate({
               inputRange: [0, 0.8, 1],
-              outputRange: [1, 1, 0]
-            })
-          }
+              outputRange: [1, 1, 0],
+            }),
+          },
         ]}
       >
         <FontAwesome5 name="tint" size={24} color="#29B6F6" />
       </Animated.View>
-      
+
       <View style={styles.achievementsContainer}>
         <Text style={styles.achievementsTitle}>Achievements</Text>
         <View style={styles.badgesContainer}>
@@ -386,14 +410,14 @@ export default function WaterChallenge() {
           {renderAchievementBadge('hydration_master')}
         </View>
       </View>
-      
-      <TouchableOpacity 
+
+      <TouchableOpacity
         style={styles.resetButton}
         onPress={resetCount}
         activeOpacity={0.7}
       >
         <LinearGradient
-          colors={['#87CEEB', '#00B7EB', '#00BFFF']} // Sky blue gradient
+          colors={['#87CEEB', '#00B7EB', '#00BFFF']}
           style={styles.buttonGradient}
         >
           <Text style={styles.resetButtonText}>Reset Today's Count</Text>
@@ -409,7 +433,7 @@ const styles = StyleSheet.create({
   },
   contentContainer: {
     alignItems: 'center',
-    paddingHorizontal: 20, // Added horizontal padding only where needed
+    paddingHorizontal: 20,
   },
   background: {
     position: 'absolute',

@@ -5,11 +5,13 @@ import { goalDetails } from '@constants/goalDetails';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { db } from '../../firebase';
 import { doc, setDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
+import { auth } from '../../firebase'; // Added Firebase Auth import
 
 export default function GoalDetails() {
   const { id = '1' } = useLocalSearchParams();
   const router = useRouter();
   const goal = goalDetails[id as keyof typeof goalDetails] ?? goalDetails['1'];
+  const userId = auth.currentUser?.uid; // Get the authenticated user ID
 
   const [modalVisible, setModalVisible] = useState(false);
   const [initialWeight, setInitialWeight] = useState('');
@@ -18,7 +20,8 @@ export default function GoalDetails() {
   useEffect(() => {
     const checkGoalStatus = async () => {
       try {
-        const startedData = await AsyncStorage.getItem(`goal_${id}_started`);
+        if (!userId) return; // Skip if user isn't logged in
+        const startedData = await AsyncStorage.getItem(`goal_${userId}_${id}_started`);
         if (startedData) {
           const { started } = JSON.parse(startedData);
           setIsGoalStarted(started);
@@ -28,7 +31,7 @@ export default function GoalDetails() {
       }
     };
     checkGoalStatus();
-  }, [id]);
+  }, [id, userId]);
 
   const handleStart = () => {
     setModalVisible(true);
@@ -41,19 +44,23 @@ export default function GoalDetails() {
       return;
     }
 
+    if (!userId) {
+      Alert.alert('Error', 'User not authenticated. Please log in.');
+      return;
+    }
+
     const goalId = id || '1';
     try {
-      await AsyncStorage.setItem(`goal_${goalId}_initialWeight`, initialWeight);
-      await AsyncStorage.setItem(`goal_${goalId}_started`, JSON.stringify({ started: true, startDate: new Date().toISOString() }));
+      await AsyncStorage.setItem(`goal_${userId}_${goalId}_initialWeight`, initialWeight);
+      await AsyncStorage.setItem(`goal_${userId}_${goalId}_started`, JSON.stringify({ started: true, startDate: new Date().toISOString() }));
 
-      const userId = 'user123';
-      // Use Firebase JS SDK Firestore methods
       await setDoc(doc(db, 'goals', `${userId}_${goalId}`), {
         goalId,
         started: true,
         startDate: new Date().toISOString(),
         initialWeight: parseFloat(initialWeight),
         timestamp: serverTimestamp(),
+        userId, // Store userId for reference
       });
 
       setIsGoalStarted(true);
@@ -70,6 +77,11 @@ export default function GoalDetails() {
   };
 
   const handleStop = () => {
+    if (!userId) {
+      Alert.alert('Error', 'User not authenticated. Please log in.');
+      return;
+    }
+
     Alert.alert(
       'Confirm Stop',
       'Are you sure you want to stop this goal? All related data will be deleted.',
@@ -80,15 +92,12 @@ export default function GoalDetails() {
           style: 'destructive',
           onPress: async () => {
             try {
-              const userId = 'user123';
               const goalId = id || '1';
               
-              // Delete from Firebase using Firebase JS SDK
               await deleteDoc(doc(db, 'goals', `${userId}_${goalId}`));
               
-              // Delete from AsyncStorage
               const keys = await AsyncStorage.getAllKeys();
-              const goalKeys = keys.filter(key => key.startsWith(`goal_${goalId}_`));
+              const goalKeys = keys.filter(key => key.startsWith(`goal_${userId}_${goalId}_`));
               await AsyncStorage.multiRemove(goalKeys);
 
               setIsGoalStarted(false);
@@ -103,6 +112,7 @@ export default function GoalDetails() {
     );
   };
 
+  // The rest of the file (UI and styles) remains unchanged
   return (
     <ScrollView style={styles.scrollContainer} contentContainerStyle={styles.contentContainer}>
       <View style={styles.header}>
@@ -185,6 +195,7 @@ export default function GoalDetails() {
   );
 }
 
+// Styles remain unchanged
 const styles = StyleSheet.create({
   scrollContainer: {
     flex: 1,
