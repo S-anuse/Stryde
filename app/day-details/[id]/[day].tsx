@@ -4,6 +4,9 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { goalDetails } from '@constants/goalDetails';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Href } from 'expo-router';
+import { db, auth } from '@/firebase';
+import { doc, setDoc, getDoc, collection, getDocs } from 'firebase/firestore'; // Added collection and getDocs
+import { onAuthStateChanged } from 'firebase/auth';
 
 export default function DayDetails() {
   const { id, day } = useLocalSearchParams() as { id: string; day: string };
@@ -11,12 +14,49 @@ export default function DayDetails() {
   const [initialWeight, setInitialWeight] = useState<number | null>(null);
   const [weightsHistory, setWeightsHistory] = useState<{ [key: string]: number }>({});
   const [loading, setLoading] = useState(true);
+  const [userId, setUserId] = useState<string | null>(null);
   const router = useRouter();
 
   useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        setUserId(user.uid);
+      } else {
+        setUserId(null);
+        router.push('/(auth)/login');
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
     const fetchData = async () => {
+      if (!userId) return;
+
       try {
-        const initialWeightData = await AsyncStorage.getItem(`goal_${id}_initialWeight`);
+        let initialWeightData: string | null = null;
+        let history: { [key: string]: number } = {};
+
+        // Fetch from Firestore
+        const goalDocRef = doc(db, 'goals', `${userId}_${id}`);
+        const goalDoc = await getDoc(goalDocRef);
+        if (goalDoc.exists()) {
+          const goalData = goalDoc.data();
+          initialWeightData = goalData.initialWeight?.toString() || null;
+
+          const weightsRef = collection(db, 'goals', `${userId}_${id}`, 'dailyWeights');
+          const weightsSnapshot = await getDocs(weightsRef);
+          weightsSnapshot.forEach((doc) => {
+            const day = doc.id;
+            const weight = doc.data().weight;
+            history[day] = weight;
+          });
+        }
+
+        // Fall back to AsyncStorage
+        if (!initialWeightData) {
+          initialWeightData = await AsyncStorage.getItem(`goal_${userId}_${id}_initialWeight`);
+        }
         if (initialWeightData) {
           const parsedInitialWeight = parseFloat(initialWeightData);
           if (!isNaN(parsedInitialWeight)) {
@@ -27,17 +67,15 @@ export default function DayDetails() {
         const keys = await AsyncStorage.getAllKeys();
         const weightKeys = keys.filter(key =>
           typeof key === 'string' &&
-          key.startsWith(`goal_${id}_day_`) &&
+          key.startsWith(`goal_${userId}_${id}_day_`) &&
           key.endsWith('_weight')
         );
-        console.log('weightKeys:', weightKeys);
-
         const weights = await Promise.all(weightKeys.map(async key => {
           try {
             const val = await AsyncStorage.getItem(key);
             const numVal = typeof val === 'string' ? parseFloat(val) : NaN;
             return {
-              day: key.split('_')[3] || '0',
+              day: key.split('_')[4] || '0',
               weight: typeof numVal === 'number' && !isNaN(numVal) ? numVal : 0
             };
           } catch (e) {
@@ -45,18 +83,25 @@ export default function DayDetails() {
           }
         }));
 
-        const history = weights.reduce<Record<string, number>>((acc, { day, weight }) => {
+        const asyncStorageHistory = weights.reduce<Record<string, number>>((acc, { day, weight }) => {
           if (typeof day === 'string' && typeof weight === 'number') {
             return { ...acc, [day]: weight };
           }
           return acc;
         }, {});
-        console.log('weightsHistory:', history);
-
+        history = { ...asyncStorageHistory, ...history };
         setWeightsHistory(history);
 
         const savedWeightForDay = history[day] ? history[day].toString() : '';
         setCurrentWeight(savedWeightForDay);
+
+        // Sync AsyncStorage with Firestore
+        if (initialWeightData) {
+          await AsyncStorage.setItem(`goal_${userId}_${id}_initialWeight`, initialWeightData);
+        }
+        for (const [day, weight] of Object.entries(history)) {
+          await AsyncStorage.setItem(`goal_${userId}_${id}_day_${day}_weight`, weight.toString());
+        }
       } catch (error) {
         console.error('Error fetching data:', error);
         Alert.alert('Error', 'Failed to load data. Please try again.');
@@ -66,12 +111,20 @@ export default function DayDetails() {
     };
 
     fetchData();
-  }, [id, day]);
+  }, [id, day, userId]);
 
   if (loading) {
     return (
       <ScrollView style={styles.container}>
         <Text style={styles.title}>Loading...</Text>
+      </ScrollView>
+    );
+  }
+
+  if (!userId) {
+    return (
+      <ScrollView style={styles.container}>
+        <Text style={styles.title}>Please log in to continue.</Text>
       </ScrollView>
     );
   }
@@ -121,10 +174,6 @@ export default function DayDetails() {
     adjustedDailyCalories = dietCalories;
   }
 
-  console.log('initialWeight:', initialWeight);
-  console.log('totalWeightLost:', totalWeightLost);
-  console.log('adjustedDailyWeightLoss:', adjustedDailyWeightLoss);
-
   const suggestExercisePlan = (calories: number) => {
     const exercises = [
       { name: 'Running (10-12 km/h)', caloriesPerHour: 900, durationMin: 75 },
@@ -143,78 +192,44 @@ export default function DayDetails() {
 
   const exerciseSuggestion = suggestExercisePlan(adjustedDailyCalories);
 
-
-const handleSaveWeight = async () => {
-  if (!initialWeight && dayNumber !== 1) {
-    Alert.alert('Error', 'Initial weight must be set on Day 1 before proceeding.');
-    return;
-  }
-
-  if (!currentWeight || isNaN(parseFloat(currentWeight)) || parseFloat(currentWeight) <= 0) {
-    Alert.alert('Error', 'Please enter a valid weight (e.g., 55.5)');
-    return;
-  }
-
-  const weightNum = parseFloat(currentWeight);
-  const weightChange = initialWeight ? initialWeight - weightNum : 0;
-
-  if (initialWeight && weightChange < 0 && dayNumber > 1) {
-    Alert.alert(
-      'Weight Increase',
-      'Your weight has increased. Do you want to adjust the goal or continue?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Adjust Goal',
-          onPress: async () => {
-            try {
-              await AsyncStorage.setItem(`goal_${id}_day_${day}_weight`, currentWeight);
-              setWeightsHistory(prev => ({ ...prev, [day]: weightNum }));
-              Alert.alert('Success', 'Goal adjusted. Weight saved.');
-              // Explicitly type the route as Href
-              router.push(`/daily-tracker/${id}?refresh=true` as Href);
-            } catch (error) {
-              console.error('Error saving weight:', error);
-              Alert.alert('Error', 'Failed to save weight. Please try again.');
-            }
-          },
-        },
-        {
-          text: 'Continue',
-          onPress: async () => {
-            try {
-              await AsyncStorage.setItem(`goal_${id}_day_${day}_weight`, currentWeight);
-              setWeightsHistory(prev => ({ ...prev, [day]: weightNum }));
-              Alert.alert('Warning', 'Weight saved, but progress may be affected.');
-              // Explicitly type the route as Href
-              router.push(`/daily-tracker/${id}?refresh=true` as Href);
-            } catch (error) {
-              console.error('Error saving weight:', error);
-              Alert.alert('Error', 'Failed to save weight. Please try again.');
-            }
-          },
-        },
-      ]
-    );
-    return;
-  }
-
-  try {
-    await AsyncStorage.setItem(`goal_${id}_day_${day}_weight`, currentWeight);
-    if (!initialWeight && dayNumber === 1) {
-      await AsyncStorage.setItem(`goal_${id}_initialWeight`, currentWeight);
-      setInitialWeight(weightNum);
+  const handleSaveWeight = async () => {
+    if (!initialWeight && dayNumber !== 1) {
+      Alert.alert('Error', 'Initial weight must be set on Day 1 before proceeding.');
+      return;
     }
-    setWeightsHistory(prev => ({ ...prev, [day]: weightNum }));
-    console.log(`Saved weight ${currentWeight} for day ${day}`);
-    Alert.alert('Success', 'Weight saved and targets updated!');
-    // Explicitly type the route as Href
-    router.push(`/daily-tracker/${id}?refresh=true` as Href);
-  } catch (error) {
-    console.error('Error saving weight:', error);
-    Alert.alert('Error', 'Failed to save weight. Please try again.');
-  }
-};
+
+    if (!currentWeight || isNaN(parseFloat(currentWeight)) || parseFloat(currentWeight) <= 0) {
+      Alert.alert('Error', 'Please enter a valid weight (e.g., 55.5)');
+      return;
+    }
+
+    const weightNum = parseFloat(currentWeight);
+    const weightChange = initialWeight ? initialWeight - weightNum : 0;
+
+    try {
+      // Save to Firestore
+      await setDoc(doc(db, 'goals', `${userId}_${id}`, 'dailyWeights', day), {
+        weight: weightNum,
+        timestamp: new Date().toISOString(),
+      });
+
+      // Save to AsyncStorage
+      await AsyncStorage.setItem(`goal_${userId}_${id}_day_${day}_weight`, currentWeight);
+      if (!initialWeight && dayNumber === 1) {
+        await AsyncStorage.setItem(`goal_${userId}_${id}_initialWeight`, currentWeight);
+        setInitialWeight(weightNum);
+        // Update initialWeight in Firestore
+        await setDoc(doc(db, 'goals', `${userId}_${id}`), { initialWeight: weightNum }, { merge: true });
+      }
+
+      setWeightsHistory(prev => ({ ...prev, [day]: weightNum }));
+      Alert.alert('Success', 'Weight saved and targets updated!');
+      router.push(`/daily-tracker/${id}?refresh=true` as Href);
+    } catch (error) {
+      console.error('Error saving weight:', error);
+      Alert.alert('Error', 'Failed to save weight. Please try again.');
+    }
+  };
 
   return (
     <ScrollView style={styles.container}>

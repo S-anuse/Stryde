@@ -3,24 +3,35 @@ import { View, Text, StyleSheet, Pressable, Modal, TextInput, Alert, ScrollView,
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { goalDetails } from '@constants/goalDetails';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { db } from '../../firebase';
-import { doc, setDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
-import { auth } from '../../firebase'; // Added Firebase Auth import
+import { db, auth } from '../../firebase';
+import { doc, setDoc, deleteDoc, serverTimestamp, collection, getDocs } from 'firebase/firestore'; // Added collection and getDocs
+import { onAuthStateChanged } from 'firebase/auth';
 
 export default function GoalDetails() {
   const { id = '1' } = useLocalSearchParams();
   const router = useRouter();
   const goal = goalDetails[id as keyof typeof goalDetails] ?? goalDetails['1'];
-  const userId = auth.currentUser?.uid; // Get the authenticated user ID
-
+  const [userId, setUserId] = useState<string | null>(null);
   const [modalVisible, setModalVisible] = useState(false);
   const [initialWeight, setInitialWeight] = useState('');
   const [isGoalStarted, setIsGoalStarted] = useState(false);
 
   useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        setUserId(user.uid);
+      } else {
+        setUserId(null);
+        router.push('/(auth)/login');
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
     const checkGoalStatus = async () => {
+      if (!userId) return;
       try {
-        if (!userId) return; // Skip if user isn't logged in
         const startedData = await AsyncStorage.getItem(`goal_${userId}_${id}_started`);
         if (startedData) {
           const { started } = JSON.parse(startedData);
@@ -60,7 +71,7 @@ export default function GoalDetails() {
         startDate: new Date().toISOString(),
         initialWeight: parseFloat(initialWeight),
         timestamp: serverTimestamp(),
-        userId, // Store userId for reference
+        userId,
       });
 
       setIsGoalStarted(true);
@@ -94,8 +105,16 @@ export default function GoalDetails() {
             try {
               const goalId = id || '1';
               
+              // Delete from Firestore
               await deleteDoc(doc(db, 'goals', `${userId}_${goalId}`));
               
+              // Delete related daily weights
+              const weightsRef = collection(db, 'goals', `${userId}_${goalId}`, 'dailyWeights');
+              const weightsSnapshot = await getDocs(weightsRef);
+              const deletePromises = weightsSnapshot.docs.map(doc => deleteDoc(doc.ref));
+              await Promise.all(deletePromises);
+
+              // Delete from AsyncStorage
               const keys = await AsyncStorage.getAllKeys();
               const goalKeys = keys.filter(key => key.startsWith(`goal_${userId}_${goalId}_`));
               await AsyncStorage.multiRemove(goalKeys);
@@ -112,7 +131,6 @@ export default function GoalDetails() {
     );
   };
 
-  // The rest of the file (UI and styles) remains unchanged
   return (
     <ScrollView style={styles.scrollContainer} contentContainerStyle={styles.contentContainer}>
       <View style={styles.header}>
@@ -195,7 +213,6 @@ export default function GoalDetails() {
   );
 }
 
-// Styles remain unchanged
 const styles = StyleSheet.create({
   scrollContainer: {
     flex: 1,

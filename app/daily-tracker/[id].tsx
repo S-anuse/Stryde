@@ -2,6 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { ScrollView, Text, StyleSheet, TouchableOpacity, Alert, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { db, auth } from '../../firebase';
+import { doc, getDoc, setDoc, collection, getDocs } from 'firebase/firestore'; // Added collection and getDocs
+import { onAuthStateChanged } from 'firebase/auth';
 
 export default function DailyTracker() {
   const { id } = useLocalSearchParams() as { id: string };
@@ -10,27 +13,80 @@ export default function DailyTracker() {
   const [initialWeight, setInitialWeight] = useState<string | null>(null);
   const [weightsHistory, setWeightsHistory] = useState<{ [key: string]: number }>({});
   const [refresh, setRefresh] = useState(false);
+  const [userId, setUserId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        setUserId(user.uid);
+      } else {
+        setUserId(null);
+        router.push('/(auth)/login');
+      }
+    });
+    return () => unsubscribe();
+  }, []);
 
   useEffect(() => {
     const fetchData = async () => {
+      if (!userId) return;
+
       try {
-        const weightData = await AsyncStorage.getItem(`goal_${id}_initialWeight`);
-        setInitialWeight(weightData || 'Not set');
+        // Check Firestore first
+        const goalDocRef = doc(db, 'goals', `${userId}_${id}`);
+        const goalDoc = await getDoc(goalDocRef);
+        let initialWeightData: string | null = null;
+        let history: { [key: string]: number } = {};
+
+        if (goalDoc.exists()) {
+          const goalData = goalDoc.data();
+          initialWeightData = goalData.initialWeight?.toString() || null;
+
+          // Fetch weights from Firestore subcollection
+          const weightsRef = collection(db, 'goals', `${userId}_${id}`, 'dailyWeights');
+          const weightsSnapshot = await getDocs(weightsRef);
+          weightsSnapshot.forEach((doc) => {
+            const day = doc.id; // e.g., '1', '2', etc.
+            const weight = doc.data().weight;
+            history[day] = weight;
+          });
+        }
+
+        // Fall back to AsyncStorage if Firestore data isn't available
+        if (!initialWeightData) {
+          initialWeightData = await AsyncStorage.getItem(`goal_${userId}_${id}_initialWeight`);
+        }
+        setInitialWeight(initialWeightData || 'Not set');
 
         const keys = await AsyncStorage.getAllKeys();
-        const weightKeys = keys.filter(key => key.startsWith(`goal_${id}_day_`) && key.endsWith('_weight'));
-        const weights = await Promise.all(weightKeys.map(key => AsyncStorage.getItem(key).then(val => ({ day: key.split('_')[3], weight: parseFloat(val || '0') }))));
-        const history = weights.reduce((acc, { day, weight }) => ({ ...acc, [day]: weight }), {});
-        console.log('weightsHistory:', history);
+        const weightKeys = keys.filter(key => key.startsWith(`goal_${userId}_${id}_day_`) && key.endsWith('_weight'));
+        const weights = await Promise.all(weightKeys.map(key => AsyncStorage.getItem(key).then(val => ({ day: key.split('_')[4], weight: parseFloat(val || '0') }))));
+        const asyncStorageHistory = weights.reduce((acc, { day, weight }) => ({ ...acc, [day]: weight }), {});
+
+        // Merge Firestore and AsyncStorage data (Firestore takes precedence)
+        history = { ...asyncStorageHistory, ...history };
         setWeightsHistory(history);
+
+        // Sync AsyncStorage with Firestore data
+        if (initialWeightData) {
+          await AsyncStorage.setItem(`goal_${userId}_${id}_initialWeight`, initialWeightData);
+        }
+        for (const [day, weight] of Object.entries(history)) {
+          await AsyncStorage.setItem(`goal_${userId}_${id}_day_${day}_weight`, weight.toString());
+        }
       } catch (error) {
         console.error('Error fetching data:', error);
       }
     };
     fetchData();
-  }, [id, refresh]);
+  }, [id, refresh, userId]);
 
   const navigateToDay = (day: number) => {
+    if (!userId) {
+      Alert.alert('Error', 'Please log in to continue.');
+      return;
+    }
+
     const lastCompletedDay = Math.max(...Object.keys(weightsHistory).map(d => parseInt(d)).filter(d => !isNaN(d)), 0);
     if (day <= lastCompletedDay + 1 && day <= 7) {
       router.push(`/day-details/${id}/${day}?exerciseType=Indoor`);

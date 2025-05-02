@@ -3,6 +3,7 @@ import { View, Text, FlatList, StyleSheet, Image, TouchableOpacity } from 'react
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db, auth } from '../../firebase';
 import { useRouter } from 'expo-router';
+import { onAuthStateChanged } from 'firebase/auth';
 
 interface GoalData {
   goalId: string;
@@ -23,10 +24,9 @@ const GoalItem = ({ goalId, title, image, goalStatus }: GoalItemProps) => {
   const router = useRouter();
 
   const handleTrack = () => {
-    // Fixed: Using the correct path format for Expo Router
-    router.push(`../goal/${goalId}`);
-  }
-  
+    router.push(`./goal/${goalId}`);
+  };
+
   return (
     <View style={styles.goalItem}>
       <Image source={image} style={styles.icon} />
@@ -48,7 +48,22 @@ const GoalItem = ({ goalId, title, image, goalStatus }: GoalItemProps) => {
 export default function Index() {
   const [startedGoals, setStartedGoals] = useState<GoalData[]>([]);
   const [goalStatuses, setGoalStatuses] = useState<{ [key: string]: { stepCount: number; milestones: string[] } }>({});
-  const userId = auth.currentUser?.uid;
+  const [userId, setUserId] = useState<string | null>(null);
+  const router = useRouter();
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        setUserId(user.uid);
+      } else {
+        setUserId(null);
+        setStartedGoals([]);
+        setGoalStatuses({});
+        router.push('/(auth)/login'); // Redirect to login if not authenticated
+      }
+    });
+    return () => unsubscribe();
+  }, []);
 
   useEffect(() => {
     const fetchStartedGoals = async () => {
@@ -64,8 +79,9 @@ export default function Index() {
         const goalsData: GoalData[] = [];
         querySnapshot.forEach((doc) => {
           const data = doc.data() as GoalData;
-          data.goalId = doc.id.split('_')[1];
-          goalsData.push(data);
+          // Document ID in Firestore is in the format userId_goalId (e.g., waVnhHLuN05DnNqZiKDGD5OFZ2M_1)
+          const goalId = doc.id.split('_')[1]; // Extract goalId from document ID
+          goalsData.push({ ...data, goalId });
         });
         setStartedGoals(goalsData);
 
@@ -107,7 +123,7 @@ export default function Index() {
   ];
 
   const getGoalStatus = (goalId: string) => {
-    const status = goalStatuses[`${userId}_${goalId}`] || null;
+    const status = goalStatuses[goalId] || null;
     return status ? { ...status, stepCount: status.stepCount || 0, milestones: status.milestones || [] } : null;
   };
 
