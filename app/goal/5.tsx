@@ -25,7 +25,7 @@ const DAILY_CHALLENGES = [
 export default function PushUpGoal() {
   const [pushUps, setPushUps] = useState<number>(0);
   const [totalPushUps, setTotalPushUps] = useState<number>(0);
-  const [longestStreak, setLongestStreak] = useState<number>(0); // Renamed from streak
+  const [longestStreak, setLongestStreak] = useState<number>(0);
   const [tier, setTier] = useState<string>(TIERS.BEGINNER.name);
   const [challenge, setChallenge] = useState(DAILY_CHALLENGES[0]);
   const [isChallengeCompleted, setIsChallengeCompleted] = useState<boolean>(false);
@@ -64,7 +64,7 @@ export default function PushUpGoal() {
       if (goalDoc.exists()) {
         const data = goalDoc.data();
         setTotalPushUps(data.pushUps || 0);
-        setLongestStreak(data.longestStreak || 0); // Updated to longestStreak
+        setLongestStreak(data.longestStreak || 0);
         setTier(data.tier || TIERS.BEGINNER.name);
         setIsChallengeCompleted(data.isChallengeCompleted || false);
 
@@ -74,7 +74,7 @@ export default function PushUpGoal() {
       } else {
         await setDoc(goalRef, {
           pushUps: 0,
-          longestStreak: 0, // Updated to longestStreak
+          longestStreak: 0,
           tier: TIERS.BEGINNER.name,
           isChallengeCompleted: false,
           dailyPushUps: [],
@@ -149,7 +149,7 @@ export default function PushUpGoal() {
 
       await updateDoc(goalRef, {
         pushUps: totalPushUps,
-        longestStreak: newLongestStreak, // Updated to longestStreak
+        longestStreak: newLongestStreak,
         tier,
         isChallengeCompleted,
         lastLoggedDate: dateString,
@@ -186,7 +186,7 @@ export default function PushUpGoal() {
   };
 
   const handleLogPushUps = (count: number | null) => {
-    const newTotal = totalPushUps + (count || pushUps);
+    const newTotal = totalPushUps + (count ?? (isNaN(pushUps) ? 0 : pushUps));
     setTotalPushUps(newTotal);
     setPushUps(0);
     savePushUpData();
@@ -297,7 +297,7 @@ export default function PushUpGoal() {
         <View style={styles.progressBarContainer}>
           <View style={[styles.progressBar, { width: `${getTierProgress()}%` }]} />
         </View>
-        <Text style={styles.streakText}>🔥 {longestStreak} Day Streak</Text> {/* Updated to longestStreak */}
+        <Text style={styles.streakText}>🔥 {longestStreak} Day Streak</Text>
       </View>
 
       <View style={styles.statsContainer}>
@@ -325,9 +325,12 @@ export default function PushUpGoal() {
           placeholder="Enter push-up count"
           keyboardType="numeric"
           value={pushUps.toString()}
-          onChangeText={(text) => setPushUps(parseInt(text.replace(/[^0-9]/g, '')) || 0)}
+          onChangeText={(text) => {
+            const numericValue = parseInt(text.replace(/[^0-9]/g, '')) || 0;
+            setPushUps(numericValue);
+          }}
         />
-        <Pressable style={styles.addButton} onPress={() => handleLogPushUps(pushUps)}>
+        <Pressable style={styles.addButton} onPress={() => handleLogPushUps(null)}>
           <Text style={styles.buttonText}>Log Push-ups</Text>
         </Pressable>
       </View>
