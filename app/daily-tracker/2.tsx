@@ -1,17 +1,21 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Pressable, TextInput, ScrollView, Alert, Modal, Image } from 'react-native';
+import { View, Text, StyleSheet, Pressable, TextInput, ScrollView, Alert, Modal } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { db } from '../../firebase';
+import { db, auth } from '../../firebase';
 import { collection, query, where, orderBy, getDocs, setDoc, doc, deleteDoc, serverTimestamp } from 'firebase/firestore';
 import { useRouter } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Ionicons } from '@expo/vector-icons';
+
+// Define the possible activity types
+type ActivityType = 'Running' | 'Jogging' | 'Cycling' | 'Swimming' | 'Walking' | 'HIIT' | 'Yoga' | 'Weight Training' | 'Dancing' | 'Elliptical';
 
 // Define the Entry interface for calorie entries
 interface Entry {
   id: string;
   userId: string;
   goalId: string;
-  activity: string;
+  activity: ActivityType;
   duration: number;
   intensity: 'low' | 'medium' | 'high';
   caloriesBurned: number;
@@ -20,7 +24,7 @@ interface Entry {
 }
 
 // Calorie burning estimates for various activities (calories per minute)
-const ACTIVITY_CALORIES = {
+const ACTIVITY_CALORIES: Record<ActivityType, number> = {
   Running: 10,
   Jogging: 8,
   Cycling: 7,
@@ -33,42 +37,45 @@ const ACTIVITY_CALORIES = {
   Elliptical: 8,
 } as const;
 
+// Map activities to icons (using valid Ionicons names)
+const ACTIVITY_ICONS: Record<ActivityType, keyof typeof Ionicons['glyphMap']> = {
+  Running: 'person-sharp',
+  Jogging: 'walk-sharp',
+  Cycling: 'bicycle-sharp',
+  Swimming: 'water-sharp',
+  Walking: 'walk-sharp',
+  HIIT: 'flame-sharp',
+  Yoga: 'body-sharp',
+  'Weight Training': 'barbell-sharp',
+  Dancing: 'musical-notes-sharp',
+  Elliptical: 'bicycle-sharp',
+};
+
 export default function DailyTracker() {
   const { id = '2' } = useLocalSearchParams();
   const router = useRouter();
-  const userId = 'user123'; // Replace with actual authentication
+  const userId = auth.currentUser?.uid || 'user123'; // Use authenticated user ID, fallback to 'user123'
 
   const [dailyEntries, setDailyEntries] = useState<Entry[]>([]);
   const [modalVisible, setModalVisible] = useState(false);
-  const [selectedActivity, setSelectedActivity] = useState<keyof typeof ACTIVITY_CALORIES | ''>('');
+  const [selectedActivity, setSelectedActivity] = useState<ActivityType | ''>('');
   const [duration, setDuration] = useState('');
   const [intensity, setIntensity] = useState<'low' | 'medium' | 'high'>('medium');
-  const [initialActivity, setInitialActivity] = useState('');
   const [totalCalories, setTotalCalories] = useState(0);
   const [goalPercentage, setGoalPercentage] = useState(0);
 
   useEffect(() => {
-    loadInitialActivity();
     loadEntries();
   }, []);
 
-  const loadInitialActivity = async () => {
-    try {
-      const activity = await AsyncStorage.getItem(`goal_${id}_initialActivity`);
-      if (activity) {
-        setInitialActivity(activity);
-      }
-    } catch (error) {
-      console.error('Error loading initial activity:', error);
-    }
-  };
-
   const loadEntries = async () => {
     try {
-      // Get current date in YYYY-MM-DD format
-      const today = new Date().toISOString().split('T')[0];
+      if (!userId) {
+        Alert.alert('Error', 'User not authenticated. Please log in.');
+        return;
+      }
 
-      // Use Firebase JS SDK Firestore methods
+      const today = new Date().toISOString().split('T')[0];
       const entriesRef = collection(db, 'calorieEntries');
       const q = query(
         entriesRef,
@@ -84,18 +91,22 @@ export default function DailyTracker() {
 
       querySnapshot.forEach((doc) => {
         const data = doc.data();
-        entries.push({
-          id: doc.id,
-          userId: data.userId,
-          goalId: data.goalId,
-          activity: data.activity,
-          duration: data.duration,
-          intensity: data.intensity,
-          caloriesBurned: data.caloriesBurned,
-          date: data.date,
-          timestamp: data.timestamp.toDate(), // Convert Firebase Timestamp to Date
-        });
-        dailyTotal += data.caloriesBurned;
+        // Validate that the activity is a valid ActivityType
+        const activity = data.activity as ActivityType;
+        if (Object.keys(ACTIVITY_CALORIES).includes(activity)) {
+          entries.push({
+            id: doc.id,
+            userId: data.userId,
+            goalId: data.goalId,
+            activity,
+            duration: data.duration,
+            intensity: data.intensity,
+            caloriesBurned: data.caloriesBurned,
+            date: data.date,
+            timestamp: data.timestamp.toDate(),
+          });
+          dailyTotal += data.caloriesBurned;
+        }
       });
 
       setDailyEntries(entries);
@@ -136,12 +147,16 @@ export default function DailyTracker() {
       return;
     }
 
+    if (!userId) {
+      Alert.alert('Error', 'User not authenticated. Please log in.');
+      return;
+    }
+
     const caloriesBurned = calculateCaloriesBurned();
     const today = new Date().toISOString().split('T')[0];
     const entryId = `${userId}_${id}_${Date.now()}`;
 
     try {
-      // Use Firebase JS SDK Firestore methods
       await setDoc(doc(db, 'calorieEntries', entryId), {
         userId,
         goalId: id,
@@ -154,7 +169,7 @@ export default function DailyTracker() {
       });
 
       setModalVisible(false);
-      loadEntries(); // Reload entries after adding a new one
+      loadEntries();
     } catch (error) {
       console.error('Error saving entry:', error);
       Alert.alert('Error', 'Failed to save your activity');
@@ -163,34 +178,43 @@ export default function DailyTracker() {
 
   const deleteEntry = async (entryId: string) => {
     try {
-      // Use Firebase JS SDK Firestore methods
       await deleteDoc(doc(db, 'calorieEntries', entryId));
-      loadEntries(); // Reload entries after deletion
+      loadEntries();
     } catch (error) {
       console.error('Error deleting entry:', error);
       Alert.alert('Error', 'Failed to delete entry');
     }
   };
 
-  // ... (rest of the file remains unchanged)
   return (
     <ScrollView style={styles.container}>
-      <View style={styles.header}>
+      <LinearGradient
+        colors={['#FF6F61', '#FF8A65']}
+        style={styles.header}
+      >
         <Text style={styles.headerTitle}>Daily Calorie Tracker</Text>
         <Text style={styles.subHeaderText}>Goal: Burn 500 Calories Daily</Text>
-      </View>
+      </LinearGradient>
 
       <View style={styles.progressContainer}>
         <View style={styles.progressWrapper}>
-          <View style={[styles.progressBar, { width: `${goalPercentage}%` }]} />
+          <LinearGradient
+            colors={['#FF6F61', '#FF8A65']}
+            style={[styles.progressBar, { width: `${goalPercentage}%` }]}
+          />
         </View>
         <Text style={styles.progressText}>
-          {totalCalories} / 500 calories ({Math.round(goalPercentage)}%)
+          {totalCalories} / 500 Calories ({Math.round(goalPercentage)}%)
         </Text>
       </View>
 
       <Pressable style={styles.addButton} onPress={handleAddEntry}>
-        <Text style={styles.addButtonText}>Add Activity</Text>
+        <LinearGradient
+          colors={['#FF6F61', '#FF8A65']}
+          style={styles.addButtonGradient}
+        >
+          <Text style={styles.addButtonText}>Add Activity</Text>
+        </LinearGradient>
       </Pressable>
 
       <View style={styles.entriesContainer}>
@@ -198,11 +222,7 @@ export default function DailyTracker() {
 
         {dailyEntries.length === 0 ? (
           <View style={styles.emptyState}>
-            <Image
-              source={require('../../assets/fire.png')}
-              style={styles.emptyStateImage}
-              resizeMode="contain"
-            />
+            <Ionicons name="flame-outline" size={50} color="#FF6F61" style={styles.emptyStateIcon} />
             <Text style={styles.emptyStateText}>No activities logged today</Text>
             <Text style={styles.emptyStateSubText}>Add your first activity to start tracking!</Text>
           </View>
@@ -210,17 +230,25 @@ export default function DailyTracker() {
           dailyEntries.map((entry) => (
             <View key={entry.id} style={styles.entryItem}>
               <View style={styles.entryContent}>
-                <Text style={styles.activityName}>{entry.activity}</Text>
+                <View style={styles.entryHeader}>
+                  <Ionicons
+                    name={ACTIVITY_ICONS[entry.activity]}
+                    size={24}
+                    color="#FF6F61"
+                    style={styles.entryIcon}
+                  />
+                  <Text style={styles.activityName}>{entry.activity}</Text>
+                </View>
                 <Text style={styles.entryDetails}>
-                  {entry.duration} min • {entry.intensity} intensity
+                  {entry.duration} min • {entry.intensity.charAt(0).toUpperCase() + entry.intensity.slice(1)} intensity
                 </Text>
-                <Text style={styles.caloriesBurned}>{entry.caloriesBurned} calories</Text>
+                <Text style={styles.caloriesBurned}>{entry.caloriesBurned} Calories</Text>
               </View>
               <Pressable
                 style={styles.deleteButton}
                 onPress={() => deleteEntry(entry.id)}
               >
-                <Text style={styles.deleteButtonText}>×</Text>
+                <Ionicons name="close-circle" size={30} color="#FF5252" />
               </Pressable>
             </View>
           ))
@@ -246,7 +274,7 @@ export default function DailyTracker() {
                     styles.activityOption,
                     selectedActivity === activity && styles.activityOptionSelected,
                   ]}
-                  onPress={() => setSelectedActivity(activity as keyof typeof ACTIVITY_CALORIES)}
+                  onPress={() => setSelectedActivity(activity as ActivityType)}
                 >
                   <Text
                     style={[
@@ -294,7 +322,7 @@ export default function DailyTracker() {
 
             <View style={styles.caloriesCalculated}>
               <Text style={styles.caloriesText}>
-                Estimated calories: {calculateCaloriesBurned()}
+                Estimated Calories: {calculateCaloriesBurned()}
               </Text>
             </View>
 
@@ -322,23 +350,22 @@ export default function DailyTracker() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: '#E6F0FA',
   },
   header: {
-    backgroundColor: '#FF7043',
     padding: 20,
     paddingTop: 40,
-    borderBottomLeftRadius: 20,
-    borderBottomRightRadius: 20,
+    borderBottomLeftRadius: 30,
+    borderBottomRightRadius: 30,
   },
   headerTitle: {
-    fontSize: 24,
+    fontSize: 28,
     fontWeight: 'bold',
     color: '#fff',
     textAlign: 'center',
   },
   subHeaderText: {
-    fontSize: 16,
+    fontSize: 18,
     color: '#fff',
     textAlign: 'center',
     marginTop: 5,
@@ -352,30 +379,34 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
-    elevation: 2,
+    elevation: 3,
   },
   progressWrapper: {
     height: 20,
-    backgroundColor: '#e0e0e0',
+    backgroundColor: '#E0E0E0',
     borderRadius: 10,
     overflow: 'hidden',
   },
   progressBar: {
     height: '100%',
-    backgroundColor: '#FF7043',
+    borderRadius: 10,
   },
   progressText: {
     marginTop: 10,
     textAlign: 'center',
     fontSize: 16,
-    fontWeight: '500',
+    fontWeight: '600',
+    color: '#333',
   },
   addButton: {
-    backgroundColor: '#FF7043',
-    margin: 16,
+    marginHorizontal: 16,
     marginTop: 0,
+    borderRadius: 12,
+    overflow: 'hidden',
+    elevation: 3,
+  },
+  addButtonGradient: {
     padding: 16,
-    borderRadius: 8,
     alignItems: 'center',
   },
   addButtonText: {
@@ -394,11 +425,12 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
-    elevation: 2,
+    elevation: 3,
   },
   entriesHeader: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: 'bold',
+    color: '#333',
     marginBottom: 15,
   },
   emptyState: {
@@ -406,10 +438,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingVertical: 30,
   },
-  emptyStateImage: {
-    width: 80,
-    height: 80,
-    opacity: 0.5,
+  emptyStateIcon: {
     marginBottom: 15,
   },
   emptyStateText: {
@@ -426,18 +455,33 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: '#f9f9f9',
+    backgroundColor: '#F9F9F9',
     padding: 15,
-    borderRadius: 8,
+    borderRadius: 12,
     marginBottom: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+    minHeight: 80, // Ensure enough space
   },
   entryContent: {
     flex: 1,
+  },
+  entryHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  entryIcon: {
+    marginRight: 8,
   },
   activityName: {
     fontSize: 18,
     fontWeight: 'bold',
     color: '#333',
+    flexShrink: 1, // Allow text to wrap if needed
   },
   entryDetails: {
     fontSize: 14,
@@ -446,22 +490,13 @@ const styles = StyleSheet.create({
   },
   caloriesBurned: {
     fontSize: 16,
-    fontWeight: '500',
-    color: '#FF7043',
+    fontWeight: '600',
+    color: '#FF6F61',
     marginTop: 4,
   },
   deleteButton: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    backgroundColor: '#ff5252',
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  deleteButtonText: {
-    color: '#fff',
-    fontSize: 20,
-    fontWeight: 'bold',
   },
   modalContainer: {
     flex: 1,
@@ -473,12 +508,14 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderRadius: 12,
     padding: 20,
-    width: '90%',
+    width: '90%', // You can adjust between 85-95% based on your preference
+    maxWidth: 400, // Add maxWidth for larger screens
     maxHeight: '80%',
   },
   modalTitle: {
     fontSize: 22,
     fontWeight: 'bold',
+    color: '#333',
     marginBottom: 20,
     textAlign: 'center',
   },
@@ -495,30 +532,38 @@ const styles = StyleSheet.create({
     padding: 12,
     fontSize: 16,
     marginBottom: 16,
+    backgroundColor: '#F9F9F9',
   },
   activitySelector: {
-    flexDirection: 'row',
     marginBottom: 16,
-    maxHeight: 50,
+    maxHeight: 100, // Limit height to prevent taking too much space
   },
   activityOption: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    minWidth: 110, // Increased from 100 to 110
+    paddingHorizontal: 15, // Increased from 12
+    paddingVertical: 12, // Increased from 10
     borderWidth: 1,
     borderColor: '#ddd',
     borderRadius: 20,
-    marginRight: 10,
+    marginRight: 10, // Increased from 8
+    backgroundColor: '#F9F9F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 50, // Fixed height for consistency
   },
   activityOptionSelected: {
-    backgroundColor: '#FF7043',
-    borderColor: '#FF7043',
+    backgroundColor: '#FF6F61',
+    borderColor: '#FF6F61',
   },
   activityOptionText: {
     fontSize: 14,
     color: '#333',
+    textAlign: 'center',
+    flexShrink: 1, // Allow text to shrink if needed
   },
   activityOptionTextSelected: {
     color: '#fff',
+    fontWeight: '600',
   },
   intensityContainer: {
     flexDirection: 'row',
@@ -528,25 +573,28 @@ const styles = StyleSheet.create({
   intensityOption: {
     flex: 1,
     paddingVertical: 10,
+    minWidth: 90, // Ensure enough space for "Medium"
     alignItems: 'center',
     borderWidth: 1,
     borderColor: '#ddd',
-    marginHorizontal: 5,
+    marginHorizontal: 4,
     borderRadius: 8,
+    backgroundColor: '#F9F9F9',
   },
   intensityOptionSelected: {
-    backgroundColor: '#FF7043',
-    borderColor: '#FF7043',
+    backgroundColor: '#FF6F61',
+    borderColor: '#FF6F61',
   },
   intensityText: {
-    fontSize: 14,
+    fontSize: 14, // Keep readable size
     color: '#333',
   },
   intensityTextSelected: {
     color: '#fff',
+    fontWeight: '600',
   },
   caloriesCalculated: {
-    backgroundColor: '#f5f5f5',
+    backgroundColor: '#F5F5F5',
     padding: 15,
     borderRadius: 8,
     marginBottom: 20,
@@ -555,7 +603,7 @@ const styles = StyleSheet.create({
   caloriesText: {
     fontSize: 18,
     fontWeight: 'bold',
-    color: '#FF7043',
+    color: '#FF6F61',
   },
   modalButtons: {
     flexDirection: 'row',
@@ -568,19 +616,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   cancelButton: {
-    backgroundColor: '#f5f5f5',
+    backgroundColor: '#F5F5F5',
     marginRight: 10,
   },
   saveButton: {
-    backgroundColor: '#FF7043',
+    backgroundColor: '#FF6F61',
     marginLeft: 10,
   },
   cancelButtonText: {
     color: '#333',
     fontWeight: 'bold',
+    fontSize: 16,
   },
   saveButtonText: {
     color: '#fff',
     fontWeight: 'bold',
+    fontSize: 16,
   },
 });

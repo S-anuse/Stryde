@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Pressable, Modal, TextInput, Alert, ScrollView, Image } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Alert, ScrollView, Image } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { goalDetails } from '@constants/goalDetails';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -13,8 +13,6 @@ export default function GoalDetails() {
   const goal = goalDetails[id as keyof typeof goalDetails] ?? goalDetails['2'];
   const userId = auth.currentUser?.uid; // Get the authenticated user ID
 
-  const [modalVisible, setModalVisible] = useState(false);
-  const [initialActivity, setInitialActivity] = useState('');
   const [isGoalStarted, setIsGoalStarted] = useState(false);
 
   useEffect(() => {
@@ -33,17 +31,7 @@ export default function GoalDetails() {
     checkGoalStatus();
   }, [id, userId]);
 
-  const handleStart = () => {
-    setModalVisible(true);
-    setInitialActivity('');
-  };
-
-  const confirmStart = async () => {
-    if (!initialActivity) {
-      Alert.alert('Error', 'Please select your primary activity');
-      return;
-    }
-
+  const handleStart = async () => {
     if (!userId) {
       Alert.alert('Error', 'User not authenticated. Please log in.');
       return;
@@ -51,23 +39,21 @@ export default function GoalDetails() {
 
     const goalId = id || '2';
     try {
-      await AsyncStorage.setItem(`goal_${userId}_${goalId}_initialActivity`, initialActivity);
+      // Removed the initialActivity requirement
       await AsyncStorage.setItem(`goal_${userId}_${goalId}_started`, JSON.stringify({ started: true, startDate: new Date().toISOString() }));
 
       await setDoc(doc(db, 'goals', `${userId}_${goalId}`), {
         goalId,
         started: true,
         startDate: new Date().toISOString(),
-        initialActivity: initialActivity,
         timestamp: new Date(),
         userId,
       });
 
       setIsGoalStarted(true);
-      setModalVisible(false);
       router.push(`/daily-tracker/${goalId}`);
     } catch (error) {
-      console.error('Error setting data:', error);
+      console.error('Error starting goal:', error);
       Alert.alert('Error', 'Failed to start goal. Please try again.');
     }
   };
@@ -110,30 +96,6 @@ export default function GoalDetails() {
         },
       ]
     );
-  };
-
-  const renderActivityOptions = () => {
-    const activities = [
-      { name: 'Running', calories: '400-600 cal/hour' },
-      { name: 'Cycling', calories: '400-800 cal/hour' },
-      { name: 'Swimming', calories: '500-700 cal/hour' },
-      { name: 'HIIT', calories: '600+ cal/hour' },
-      { name: 'Other', calories: 'Mixed' }
-    ];
-
-    return activities.map((activity, index) => (
-      <Pressable
-        key={index}
-        style={[
-          styles.activityOption,
-          initialActivity === activity.name && styles.activityOptionSelected
-        ]}
-        onPress={() => setInitialActivity(activity.name)}
-      >
-        <Text style={styles.activityName}>{activity.name}</Text>
-        <Text style={styles.activityCalories}>{activity.calories}</Text>
-      </Pressable>
-    ));
   };
 
   return (
@@ -186,30 +148,6 @@ export default function GoalDetails() {
       <View style={styles.disclaimerContainer}>
         <Text style={styles.disclaimer}>{goal.disclaimer}</Text>
       </View>
-
-      <Modal
-        animationType="slide"
-        transparent={true}
-        visible={modalVisible}
-        onRequestClose={() => setModalVisible(false)}
-      >
-        <View style={styles.modalContainer}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Select Your Primary Activity</Text>
-            <View style={styles.activityOptionsContainer}>
-              {renderActivityOptions()}
-            </View>
-            <View style={styles.modalButtons}>
-              <Pressable style={styles.modalButton} onPress={() => setModalVisible(false)}>
-                <Text style={styles.modalButtonText}>Cancel</Text>
-              </Pressable>
-              <Pressable style={styles.modalButton} onPress={confirmStart}>
-                <Text style={styles.modalButtonText}>Confirm</Text>
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      </Modal>
     </ScrollView>
   );
 }
@@ -326,67 +264,6 @@ const styles = StyleSheet.create({
   startButtonText: {
     color: '#fff',
     fontSize: 18,
-    fontWeight: 'bold',
-  },
-  modalContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-  },
-  modalContent: {
-    backgroundColor: '#fff',
-    padding: 20,
-    borderRadius: 10,
-    width: '80%',
-    alignItems: 'center',
-    maxHeight: '80%',
-  },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    marginBottom: 15,
-  },
-  activityOptionsContainer: {
-    width: '100%',
-    marginBottom: 15,
-  },
-  activityOption: {
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    marginBottom: 8,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  activityOptionSelected: {
-    borderColor: '#FF7043',
-    backgroundColor: 'rgba(255, 112, 67, 0.1)',
-  },
-  activityName: {
-    fontSize: 16,
-    fontWeight: '500',
-  },
-  activityCalories: {
-    fontSize: 14,
-    color: '#666',
-  },
-  modalButtons: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    width: '100%',
-  },
-  modalButton: {
-    backgroundColor: '#FF7043',
-    padding: 10,
-    borderRadius: 8,
-    width: '45%',
-    alignItems: 'center',
-  },
-  modalButtonText: {
-    color: '#fff',
-    fontSize: 16,
     fontWeight: 'bold',
   },
 });
