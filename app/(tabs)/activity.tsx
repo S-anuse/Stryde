@@ -1,12 +1,13 @@
-import { StyleSheet, View, useColorScheme } from 'react-native';
+import { StyleSheet, View, useColorScheme, Dimensions } from 'react-native';
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import { useEffect, useState, useCallback } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import stepCounter from '@/services/stepCounter';
 import { db, auth } from '../../firebase';
-import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, setDoc, onSnapshot, collection, query, orderBy, getDocs } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
+import { LineChart } from 'react-native-chart-kit';
 
 export default function ActivityScreen() {
   const [currentStepCount, setCurrentStepCount] = useState<number>(0);
@@ -14,6 +15,7 @@ export default function ActivityScreen() {
   const [error, setError] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [isInitialized, setIsInitialized] = useState<boolean>(false);
+  const [historicalSteps, setHistoricalSteps] = useState<{ date: string; steps: number }[]>([]);
 
   const colorScheme = useColorScheme();
   const backgroundColor = colorScheme === 'dark' ? '#121212' : '#FFFFFF';
@@ -25,21 +27,16 @@ export default function ActivityScreen() {
     try {
       console.log('Initializing step counter for user:', uid);
       
-      // First, set the user ID in the step counter service
       stepCounter.setUserId(uid);
       
-      // Then get the user's data from Firestore
       const userDocRef = doc(db, 'users', uid);
       const docSnap = await getDoc(userDocRef);
       
       if (docSnap.exists()) {
         const data = docSnap.data();
         console.log('Loaded user data from Firestore:', data);
-        
-        // Use the step count from Firestore
         setCurrentStepCount(data.stepCount || 0);
       } else {
-        // Create a new user document if it doesn't exist
         console.log('Creating new user document');
         await setDoc(userDocRef, { 
           email: auth.currentUser?.email, 
@@ -50,7 +47,8 @@ export default function ActivityScreen() {
         setCurrentStepCount(0);
       }
       
-      // Start the step counter after initialization
+      await loadHistoricalSteps(uid);
+      
       if (!stepCounter.pedometerSubscription) {
         await stepCounter.start();
         console.log('Step counter started');
@@ -64,6 +62,47 @@ export default function ActivityScreen() {
     }
   }, []);
 
+  // Load historical step data from Firestore
+  const loadHistoricalSteps = async (uid: string) => {
+    try {
+      const stepsCollection = collection(db, 'users', uid, 'step_data'); // Updated to correct collection name
+      const q = query(stepsCollection, orderBy('date', 'asc'));
+      const querySnapshot = await getDocs(q);
+      
+      const stepsData: { date: string; steps: number }[] = [];
+      querySnapshot.forEach((doc) => {
+        const data = doc.data();
+        console.log('Fetched step data:', data); // Debug log
+        stepsData.push({
+          date: data.date,
+          steps: data.steps || 0,
+        });
+      });
+      
+      if (stepsData.length === 0) {
+        console.log('No historical step data found for user:', uid);
+        // Initialize with empty data for the last 7 days if none exists
+        const today = new Date();
+        const emptyData = Array.from({ length: 7 }, (_, i) => {
+          const date = new Date(today);
+          date.setDate(today.getDate() - (6 - i));
+          return {
+            date: date.toISOString().split('T')[0], // Format: YYYY-MM-DD
+            steps: 0,
+          };
+        });
+        setHistoricalSteps(emptyData);
+      } else {
+        const last7Days = stepsData.slice(-7);
+        setHistoricalSteps(last7Days);
+        console.log('Loaded historical steps:', last7Days);
+      }
+    } catch (err) {
+      console.error('Failed to load historical steps:', err);
+      setError('Failed to load historical step data');
+    }
+  };
+
   // Handle user authentication state changes
   useEffect(() => {
     console.log('Setting up authentication listener');
@@ -71,16 +110,14 @@ export default function ActivityScreen() {
       if (user) {
         console.log('User authenticated:', user.uid);
         setUserId(user.uid);
-        
-        // Initialize step counter after authentication
         await initializeStepCounter(user.uid);
       } else {
         console.log('User logged out or not authenticated');
         setUserId(null);
         setCurrentStepCount(0);
         setIsInitialized(false);
+        setHistoricalSteps([]);
         
-        // Stop the step counter when logged out
         if (stepCounter.pedometerSubscription) {
           stepCounter.stop();
           console.log('Step counter stopped');
@@ -88,7 +125,6 @@ export default function ActivityScreen() {
       }
     });
 
-    // Cleanup function
     return () => {
       console.log('Cleaning up authentication listener');
       unsubscribeAuth();
@@ -104,20 +140,15 @@ export default function ActivityScreen() {
 
     console.log('Setting up step counter and Firestore listeners');
     
-    // Subscribe to step counter updates
     const stepCounterUnsubscribe = stepCounter.subscribe((steps: number) => {
       console.log('Step counter update received:', steps);
       setCurrentStepCount(steps);
     });
 
-    // Subscribe to Firestore updates for real-time sync
     const firestoreUnsubscribe = onSnapshot(doc(db, 'users', userId), (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
         console.log('Firestore sync update:', data.stepCount);
-        
-        // Only update the UI if the Firestore count is higher
-        // This prevents overwriting local step count with older data
         if (data.stepCount > currentStepCount) {
           setCurrentStepCount(data.stepCount);
         }
@@ -127,12 +158,10 @@ export default function ActivityScreen() {
       setError('Failed to sync step count from Firestore');
     });
 
-    // Monitor shaking state
     const shakingInterval = setInterval(() => {
       setIsShaking(stepCounter.isShaking);
     }, 100);
 
-    // Cleanup function
     return () => {
       console.log('Cleaning up step counter and Firestore listeners');
       stepCounterUnsubscribe();
@@ -165,6 +194,35 @@ export default function ActivityScreen() {
 
   const calculateTime = () => {
     return Math.floor(currentStepCount / 100);
+  };
+
+  // Chart configuration
+  const chartData = {
+    labels: historicalSteps.map((item) => item.date.split('-').slice(1).join('/')), // Format: MM/DD
+    datasets: [
+      {
+        data: historicalSteps.map((item) => item.steps),
+        color: () => colorScheme === 'dark' ? '#00C4B4' : '#007AFF', // Line color
+        strokeWidth: 2,
+      },
+    ],
+  };
+
+  const chartConfig = {
+    backgroundColor: cardBackground,
+    backgroundGradientFrom: cardBackground,
+    backgroundGradientTo: cardBackground,
+    decimalPlaces: 0,
+    color: () => textColor,
+    labelColor: () => textColor,
+    style: {
+      borderRadius: 16,
+    },
+    propsForDots: {
+      r: '6',
+      strokeWidth: '2',
+      stroke: colorScheme === 'dark' ? '#00C4B4' : '#007AFF',
+    },
   };
 
   return (
@@ -202,31 +260,31 @@ export default function ActivityScreen() {
                 </ThemedText>
               </ThemedView>
 
+              {/* Historical Steps Chart */}
+              <ThemedView style={[styles.chartCard, { backgroundColor: cardBackground }]}>
+                <ThemedText style={[styles.cardTitle, { color: textColor }]}>Step History (Last 7 Days)</ThemedText>
+                {historicalSteps.length > 0 ? (
+                  <LineChart
+                    data={chartData}
+                    width={Dimensions.get('window').width * 0.85} // Responsive width
+                    height={220}
+                    yAxisSuffix=" steps"
+                    chartConfig={chartConfig}
+                    bezier
+                    style={{
+                      marginVertical: 8,
+                      borderRadius: 16,
+                    }}
+                  />
+                ) : (
+                  <ThemedText style={[styles.noDataText, { color: textColor }]}>
+                    No step history available.
+                  </ThemedText>
+                )}
+              </ThemedView>
+
               <View style={styles.metricsRow}>
-                <ThemedView style={[styles.metricCard, { backgroundColor: cardBackground }]}>
-                  <ThemedText style={[styles.metricIcon, { color: textColor }]}>📍</ThemedText>
-                  <ThemedText style={[styles.metricValueSmall, { color: textColor }]}>
-                    {userId ? calculateDistance() : '--'}
-                  </ThemedText>
-                  <ThemedText style={[styles.metricValueSmall, { color: textColor }]}>yd</ThemedText>
-                  <ThemedText style={[styles.metricLabelSmall, { color: textColor }]}>Distance</ThemedText>
-                </ThemedView>
-                <ThemedView style={[styles.metricCard, { backgroundColor: cardBackground }]}>
-                  <ThemedText style={[styles.metricIcon, { color: textColor }]}>🔥</ThemedText>
-                  <ThemedText style={[styles.metricValueSmall, { color: textColor }]}>
-                    {userId ? calculateCalories() : '--'}
-                  </ThemedText>
-                  <ThemedText style={[styles.metricValueSmall, { color: textColor }]}>kcal</ThemedText>
-                  <ThemedText style={[styles.metricLabelSmall, { color: textColor }]}>Calories</ThemedText>
-                </ThemedView>
-                <ThemedView style={[styles.metricCard, { backgroundColor: cardBackground }]}>
-                  <ThemedText style={[styles.metricIcon, { color: textColor }]}>⏱️</ThemedText>
-                  <ThemedText style={[styles.metricValueSmall, { color: textColor }]}>
-                    {userId ? calculateTime() : '--'}
-                  </ThemedText>
-                  <ThemedText style={[styles.metricValueSmall, { color: textColor }]}>min</ThemedText>
-                  <ThemedText style={[styles.metricLabelSmall, { color: textColor }]}>Time</ThemedText>
-                </ThemedView>
+                
               </View>
             </View>
           </View>
@@ -244,6 +302,18 @@ const styles = StyleSheet.create({
   mainCard: {
     borderRadius: 16,
     padding: 25,
+    marginBottom: 20,
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    width: '90%',
+    alignItems: 'center',
+  },
+  chartCard: {
+    borderRadius: 16,
+    padding: 15,
     marginBottom: 20,
     elevation: 5,
     shadowColor: '#000',
@@ -290,4 +360,5 @@ const styles = StyleSheet.create({
     borderColor: 'orange',
   },
   shakeText: { color: 'orange', textAlign: 'center', fontWeight: '500' },
+  noDataText: { fontSize: 16, textAlign: 'center', marginVertical: 10 },
 });

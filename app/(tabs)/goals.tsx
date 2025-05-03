@@ -21,8 +21,6 @@ const predefinedGoals = [
   { id: '9', title: 'Do 30 minutes of yoga daily', image: require('../../assets/lotus.png') },
   { id: '10', title: 'Cut sugar intake by 50%', image: require('../../assets/diet.png') },
   { id: '11', title: 'Plank for 2 minutes daily', image: require('../../assets/plank.png') },
-  { id: '12', title: 'Swim 500 meters weekly', image: require('../../assets/swimming.png') },
-  { id: '13', title: 'Lift weights 3 times a week', image: require('../../assets/dumbbells.png') },
   { id: '14', title: 'Reduce 5% body fat in 1 month', image: require('../../assets/body.png') },
   { id: '15', title: 'Hike 10 km every weekend', image: require('../../assets/hiking.png') },
 ];
@@ -78,11 +76,7 @@ const GoalItem = ({ id, title, image, goalStatus }: GoalItemProps) => {
         <Image source={image} style={styles.icon} />
         <View style={styles.textContainer}>
           <Text style={styles.goalText}>{title}</Text>
-          {goalStatus && (
-            <Text style={styles.goalStatus}>
-              Steps: {goalStatus.stepCount} | Milestones: {goalStatus.milestones.join(', ') || 'None'}
-            </Text>
-          )}
+          
           <Pressable onPress={handleExplore} style={styles.exploreButton}>
             <Text style={styles.exploreText}>Explore</Text>
           </Pressable>
