@@ -1,6 +1,6 @@
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { Pressable } from 'react-native';
+import { Pressable, Text } from 'react-native';
 import { useRouter } from 'expo-router';
 
 export default function TabLayout() {
@@ -11,6 +11,10 @@ export default function TabLayout() {
       screenOptions={{
         headerShown: true,
         tabBarActiveTintColor: '#ff4500',
+        tabBarLabelStyle: { 
+          fontSize: 12, 
+          fontWeight: 'bold',
+        },
         headerRight: () => (
           <Pressable
             onPress={() => router.push('/(tabs)/profile')}
@@ -34,6 +38,11 @@ export default function TabLayout() {
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="home" size={size} color={color} />
           ),
+          tabBarLabel: ({ focused, color }) => (
+            <Text style={{ color, fontSize: 12, fontWeight: focused ? 'bold' : 'normal' }}>
+              Home
+            </Text>
+          ),
         }}
       />
       <Tabs.Screen
@@ -42,6 +51,11 @@ export default function TabLayout() {
           title: 'Goals',
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="trophy" size={size} color={color} />
+          ),
+          tabBarLabel: ({ focused, color }) => (
+            <Text style={{ color, fontSize: 12, fontWeight: focused ? 'bold' : 'normal' }}>
+              Goals
+            </Text>
           ),
         }}
       />
@@ -52,14 +66,24 @@ export default function TabLayout() {
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="play-circle" size={size} color={color} />
           ),
+          tabBarLabel: ({ focused, color }) => (
+            <Text style={{ color, fontSize: 12, fontWeight: focused ? 'bold' : 'normal' }}>
+              Record
+            </Text>
+          ),
         }}
       />
       <Tabs.Screen
-        name="activity" // New tab
+        name="activity"
         options={{
           title: 'Activity',
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="walk" size={size} color={color} />
+          ),
+          tabBarLabel: ({ focused, color }) => (
+            <Text style={{ color, fontSize: 12, fontWeight: focused ? 'bold' : 'normal' }}>
+              Activity
+            </Text>
           ),
         }}
       />

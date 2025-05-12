@@ -3,7 +3,7 @@ import { ScrollView, Text, StyleSheet, TouchableOpacity, Alert, View } from 'rea
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { db, auth } from '../../firebase';
-import { doc, getDoc, setDoc, collection, getDocs } from 'firebase/firestore'; // Added collection and getDocs
+import { doc, getDoc, setDoc, collection, getDocs } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 
 export default function DailyTracker() {
@@ -32,7 +32,6 @@ export default function DailyTracker() {
       if (!userId) return;
 
       try {
-        // Check Firestore first
         const goalDocRef = doc(db, 'goals', `${userId}_${id}`);
         const goalDoc = await getDoc(goalDocRef);
         let initialWeightData: string | null = null;
@@ -42,17 +41,22 @@ export default function DailyTracker() {
           const goalData = goalDoc.data();
           initialWeightData = goalData.initialWeight?.toString() || null;
 
-          // Fetch weights from Firestore subcollection
           const weightsRef = collection(db, 'goals', `${userId}_${id}`, 'dailyWeights');
           const weightsSnapshot = await getDocs(weightsRef);
           weightsSnapshot.forEach((doc) => {
-            const day = doc.id; // e.g., '1', '2', etc.
+            const day = doc.id;
             const weight = doc.data().weight;
             history[day] = weight;
           });
+        } else {
+          await setDoc(goalDocRef, {
+            goalId: id,
+            started: false,
+            startDate: new Date().toISOString(),
+            userId: userId,
+          });
         }
 
-        // Fall back to AsyncStorage if Firestore data isn't available
         if (!initialWeightData) {
           initialWeightData = await AsyncStorage.getItem(`goal_${userId}_${id}_initialWeight`);
         }
@@ -63,11 +67,9 @@ export default function DailyTracker() {
         const weights = await Promise.all(weightKeys.map(key => AsyncStorage.getItem(key).then(val => ({ day: key.split('_')[4], weight: parseFloat(val || '0') }))));
         const asyncStorageHistory = weights.reduce((acc, { day, weight }) => ({ ...acc, [day]: weight }), {});
 
-        // Merge Firestore and AsyncStorage data (Firestore takes precedence)
         history = { ...asyncStorageHistory, ...history };
         setWeightsHistory(history);
 
-        // Sync AsyncStorage with Firestore data
         if (initialWeightData) {
           await AsyncStorage.setItem(`goal_${userId}_${id}_initialWeight`, initialWeightData);
         }

@@ -5,7 +5,7 @@ import { goalDetails } from '@constants/goalDetails';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Href } from 'expo-router';
 import { db, auth } from '@/firebase';
-import { doc, setDoc, getDoc, collection, getDocs } from 'firebase/firestore'; // Added collection and getDocs
+import { doc, setDoc, getDoc, collection, getDocs } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 
 export default function DayDetails() {
@@ -37,7 +37,6 @@ export default function DayDetails() {
         let initialWeightData: string | null = null;
         let history: { [key: string]: number } = {};
 
-        // Fetch from Firestore
         const goalDocRef = doc(db, 'goals', `${userId}_${id}`);
         const goalDoc = await getDoc(goalDocRef);
         if (goalDoc.exists()) {
@@ -53,7 +52,6 @@ export default function DayDetails() {
           });
         }
 
-        // Fall back to AsyncStorage
         if (!initialWeightData) {
           initialWeightData = await AsyncStorage.getItem(`goal_${userId}_${id}_initialWeight`);
         }
@@ -95,7 +93,6 @@ export default function DayDetails() {
         const savedWeightForDay = history[day] ? history[day].toString() : '';
         setCurrentWeight(savedWeightForDay);
 
-        // Sync AsyncStorage with Firestore
         if (initialWeightData) {
           await AsyncStorage.setItem(`goal_${userId}_${id}_initialWeight`, initialWeightData);
         }
@@ -207,18 +204,16 @@ export default function DayDetails() {
     const weightChange = initialWeight ? initialWeight - weightNum : 0;
 
     try {
-      // Save to Firestore
       await setDoc(doc(db, 'goals', `${userId}_${id}`, 'dailyWeights', day), {
         weight: weightNum,
         timestamp: new Date().toISOString(),
+        userId: userId,
       });
 
-      // Save to AsyncStorage
       await AsyncStorage.setItem(`goal_${userId}_${id}_day_${day}_weight`, currentWeight);
       if (!initialWeight && dayNumber === 1) {
         await AsyncStorage.setItem(`goal_${userId}_${id}_initialWeight`, currentWeight);
         setInitialWeight(weightNum);
-        // Update initialWeight in Firestore
         await setDoc(doc(db, 'goals', `${userId}_${id}`), { initialWeight: weightNum }, { merge: true });
       }
 

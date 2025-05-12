@@ -14,7 +14,6 @@ const predefinedGoals = [
   { id: '2', title: 'Burn 500 calories daily', image: require('../../assets/fire.png') },
   { id: '3', title: 'Walk 10,000 steps daily', image: require('../../assets/shoes.png') },
   { id: '4', title: 'Run 5 km in under 30 minutes', image: require('../../assets/training.png') },
-  { id: '5', title: 'Complete 50 push-ups daily', image: require('../../assets/push-up.png') },
   { id: '6', title: 'Lose 1 inch off waist in 2 weeks', image: require('../../assets/slim-body.png') },
   { id: '7', title: 'Drink 3 liters of water daily', image: require('../../assets/drop.png') },
   { id: '8', title: 'Cycle 20 km weekly', image: require('../../assets/school.png') },

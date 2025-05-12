@@ -10,8 +10,6 @@ import {
   TouchableOpacity,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
-import { db, auth } from '../../firebase';
 import * as Haptics from 'expo-haptics';
 import * as Speech from 'expo-speech';
 
@@ -83,8 +81,6 @@ export default function YogaGoal() {
   const [modalVisible, setModalVisible] = useState(false);
   const [instructionsVisible, setInstructionsVisible] = useState(false);
   const [currentPose, setCurrentPose] = useState<any>(null);
-  const [totalSessions, setTotalSessions] = useState(0);
-  const [completedTime, setCompletedTime] = useState(0);
   const [lastPauseTime, setLastPauseTime] = useState(0);
   const [isBreak, setIsBreak] = useState(false);
   const [breakTimeRemaining, setBreakTimeRemaining] = useState(5);
@@ -93,10 +89,8 @@ export default function YogaGoal() {
 
   const router = useRouter();
   const timerRef = useRef<NodeJS.Timeout | null>(null);
-  const userId = auth.currentUser?.uid;
 
   useEffect(() => {
-    loadYogaData();
     return () => {
       cleanupSession();
     };
@@ -131,33 +125,6 @@ export default function YogaGoal() {
       Speech.stop();
     } catch (error) {
       console.error('Error stopping speech:', error);
-    }
-  };
-
-  const loadYogaData = async () => {
-    if (!userId) {
-      Alert.alert('Error', 'User not authenticated. Please log in.');
-      return;
-    }
-
-    try {
-      const goalRef = doc(db, 'users', userId, 'goals', '9');
-      const goalDoc = await getDoc(goalRef);
-
-      if (goalDoc.exists()) {
-        const data = goalDoc.data();
-        setTotalSessions(data.totalSessions || 0);
-        setCompletedTime(data.completedTime || 0);
-      } else {
-        await setDoc(goalRef, {
-          totalSessions: 0,
-          completedTime: 0,
-          userId,
-        });
-      }
-    } catch (error) {
-      console.error('Error loading yoga data:', error);
-      Alert.alert('Error', 'Failed to load your yoga data');
     }
   };
 
@@ -536,81 +503,7 @@ export default function YogaGoal() {
       console.error('Speech initialization error:', error);
     }
 
-    saveYogaData();
     setModalVisible(true);
-  };
-
-  const saveYogaData = async () => {
-    if (!userId || !selectedSequence) {
-      Alert.alert('Error', 'Missing user or session data.');
-      return;
-    }
-
-    try {
-      const goalRef = doc(db, 'users', userId, 'goals', '9');
-      const goalDoc = await getDoc(goalRef);
-      const sessionTimeCompleted = totalSessionTime;
-
-      if (goalDoc.exists()) {
-        const data = goalDoc.data();
-        await updateDoc(goalRef, {
-          totalSessions: (data.totalSessions || 0) + 1,
-          completedTime: (data.completedTime || 0) + sessionTimeCompleted,
-          lastCompletedLevel: selectedLevel,
-          userId,
-        });
-      } else {
-        await setDoc(goalRef, {
-          totalSessions: 1,
-          completedTime: sessionTimeCompleted,
-          lastCompletedLevel: selectedLevel,
-          userId,
-        });
-      }
-
-      setTotalSessions(prev => prev + 1);
-      setCompletedTime(prev => prev + sessionTimeCompleted);
-    } catch (error) {
-      console.error('Error saving yoga data:', error);
-      Alert.alert('Error', 'Failed to save your yoga data');
-    }
-  };
-
-  const resetProgress = async () => {
-    if (!userId) {
-      Alert.alert('Error', 'User not authenticated. Please log in.');
-      return;
-    }
-
-    Alert.alert(
-      'Reset Progress',
-      'Are you sure you want to reset your yoga progress? This action cannot be undone.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Reset',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              const goalRef = doc(db, 'users', userId, 'goals', '9');
-              await setDoc(goalRef, {
-                totalSessions: 0,
-                completedTime: 0,
-                lastSession: '',
-                userId,
-              });
-
-              setTotalSessions(0);
-              setCompletedTime(0);
-              Alert.alert('Success', 'Your yoga progress has been reset.');
-            } catch (error) {
-              console.error('Error resetting progress:', error);
-              Alert.alert('Error', 'Failed to reset your progress.');
-            }
-          },
-        },
-      ]
-    );
   };
 
   const showPoseInstructions = (pose: any) => {
@@ -766,11 +659,6 @@ export default function YogaGoal() {
       <Text style={styles.title}>Yoga Journey</Text>
       <Text style={styles.subtitle}>Choose your practice level</Text>
 
-      <View style={styles.statsContainer}>
-        <Text style={styles.statLabel}>Total Sessions: {totalSessions}</Text>
-        <Text style={styles.statLabel}>Total Practice Time: {formatTime(completedTime)}</Text>
-      </View>
-
       <View style={styles.levelContainer}>
         <TouchableOpacity
           style={[styles.levelButton, styles.beginnerButton]}
@@ -799,10 +687,6 @@ export default function YogaGoal() {
           <Text style={styles.levelDuration}>{yogaSequences.advanced.duration} min</Text>
         </TouchableOpacity>
       </View>
-
-      <TouchableOpacity style={styles.resetButton} onPress={resetProgress}>
-        <Text style={styles.resetButtonText}>Reset Progress</Text>
-      </TouchableOpacity>
 
       <Modal
         animationType="slide"
@@ -942,39 +826,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   secondaryButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  statsContainer: {
-    backgroundColor: '#FFFFFF',
-    padding: 20,
-    borderRadius: 16,
-    marginBottom: 24,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-    width: '100%',
-    alignItems: 'center',
-  },
-  statLabel: {
-    fontSize: 16,
-    color: '#4A5568',
-    marginBottom: 8,
-    fontWeight: '500',
-  },
-  resetButton: {
-    backgroundColor: '#E53E3E',
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderRadius: 10,
-    alignItems: 'center',
-    width: 160,
-    marginTop: 20,
-  },
-  resetButtonText: {
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',

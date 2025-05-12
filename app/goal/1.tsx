@@ -4,7 +4,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { goalDetails } from '@constants/goalDetails';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { db, auth } from '../../firebase';
-import { doc, setDoc, deleteDoc, serverTimestamp, collection, getDocs } from 'firebase/firestore'; // Added collection and getDocs
+import { doc, setDoc, deleteDoc, serverTimestamp, collection, getDocs, getDoc } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 
 export default function GoalDetails() {
@@ -104,15 +104,26 @@ export default function GoalDetails() {
           onPress: async () => {
             try {
               const goalId = id || '1';
+              const goalDocRef = doc(db, 'goals', `${userId}_${goalId}`);
               
-              // Delete from Firestore
-              await deleteDoc(doc(db, 'goals', `${userId}_${goalId}`));
-              
+              // Check if the document exists and user has permission
+              const goalDoc = await getDoc(goalDocRef);
+              if (!goalDoc.exists()) {
+                throw new Error('Goal document does not exist.');
+              }
+              const goalData = goalDoc.data();
+              if (goalData.userId !== userId) {
+                throw new Error('User does not have permission to delete this goal.');
+              }
+
               // Delete related daily weights
               const weightsRef = collection(db, 'goals', `${userId}_${goalId}`, 'dailyWeights');
               const weightsSnapshot = await getDocs(weightsRef);
               const deletePromises = weightsSnapshot.docs.map(doc => deleteDoc(doc.ref));
               await Promise.all(deletePromises);
+
+              // Delete the goal document
+              await deleteDoc(goalDocRef);
 
               // Delete from AsyncStorage
               const keys = await AsyncStorage.getAllKeys();

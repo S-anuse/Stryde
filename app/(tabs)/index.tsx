@@ -1,3 +1,4 @@
+// E:\Stryde\app\(tabs)\index.tsx
 import React, { useState, useEffect } from 'react';
 import { View, Text, FlatList, StyleSheet, Image, TouchableOpacity } from 'react-native';
 import { collection, query, where, getDocs } from 'firebase/firestore';
@@ -11,6 +12,8 @@ interface GoalData {
   startDate: string;
   longestStreak?: number;
   userId: string;
+  stepCount?: number;
+  milestones?: string[];
 }
 
 interface GoalItemProps {
@@ -47,7 +50,6 @@ const GoalItem = ({ goalId, title, image, goalStatus }: GoalItemProps) => {
 
 export default function Index() {
   const [startedGoals, setStartedGoals] = useState<GoalData[]>([]);
-  const [goalStatuses, setGoalStatuses] = useState<{ [key: string]: { stepCount: number; milestones: string[] } }>({});
   const [userId, setUserId] = useState<string | null>(null);
   const router = useRouter();
 
@@ -58,8 +60,7 @@ export default function Index() {
       } else {
         setUserId(null);
         setStartedGoals([]);
-        setGoalStatuses({});
-        router.push('/(auth)/login'); // Redirect to login if not authenticated
+        router.push('/(auth)/login');
       }
     });
     return () => unsubscribe();
@@ -79,25 +80,13 @@ export default function Index() {
         const goalsData: GoalData[] = [];
         querySnapshot.forEach((doc) => {
           const data = doc.data() as GoalData;
-          // Document ID in Firestore is in the format userId_goalId (e.g., waVnhHLuN05DnNqZiKDGD5OFZ2M_1)
-          const goalId = doc.id.split('_')[1]; // Extract goalId from document ID
+          const goalId = doc.id.split('_')[1];
           goalsData.push({ ...data, goalId });
         });
         setStartedGoals(goalsData);
-
-        const statuses: { [key: string]: { stepCount: number; milestones: string[] } } = {};
-        const goalsRef = collection(db, 'users', userId, 'goals');
-        const goalsSnapshot = await getDocs(goalsRef);
-        goalsSnapshot.forEach((doc) => {
-          const data = doc.data();
-          statuses[doc.id] = {
-            stepCount: data.stepCount || 0,
-            milestones: data.milestones || [],
-          };
-        });
-        setGoalStatuses(statuses);
       } catch (error) {
         console.error('Error fetching data:', error);
+        setStartedGoals([]);
       }
     };
 
@@ -122,9 +111,8 @@ export default function Index() {
     { id: '15', title: 'Hike 10 km every weekend', image: require('../../assets/hiking.png') },
   ];
 
-  const getGoalStatus = (goalId: string) => {
-    const status = goalStatuses[goalId] || null;
-    return status ? { ...status, stepCount: status.stepCount || 0, milestones: status.milestones || [] } : null;
+  const getGoalStatus = (goal: GoalData) => {
+    return goal ? { stepCount: goal.stepCount || 0, milestones: goal.milestones || [] } : null;
   };
 
   return (
@@ -143,7 +131,7 @@ export default function Index() {
                 goalId={item.goalId}
                 title={goal.title}
                 image={goal.image}
-                goalStatus={getGoalStatus(item.goalId)}
+                goalStatus={getGoalStatus(item)}
               />
             );
           }}

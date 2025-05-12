@@ -17,14 +17,19 @@ interface Route {
 export default function RootLayout() {
   const { user, loading } = useAuth();
   const router = useRouter();
-  const [isPedometerAvailable, setIsPedometerAvailable] = useState<boolean>(false);
-  const [permissionGranted, setPermissionGranted] = useState<boolean>(false);
-  const [isCounting, setIsCounting] = useState<boolean>(true);
-
+  const [isPedometerAvailable, setIsPedometerAvailable] = useState(false);
+  const [permissionGranted, setPermissionGranted] = useState(false);
+  const [isCounting, setIsCounting] = useState(true);
+  
   // Get the current route name
   const navigationState = useRootNavigationState();
-  const routes: Route[] = navigationState?.routes ?? [];
-  const currentRoute = routes[routes.length - 1]?.name || '';
+  
+  // Fix: Safely access navigationState.routes to prevent the error
+  const currentRoute = React.useMemo(() => {
+    if (!navigationState?.routes?.length) return '';
+    const routes = navigationState.routes;
+    return routes[routes.length - 1]?.name || '';
+  }, [navigationState]);
 
   // Request notification permissions
   useEffect(() => {
@@ -47,7 +52,6 @@ export default function RootLayout() {
       try {
         const available = await Pedometer.isAvailableAsync();
         setIsPedometerAvailable(available);
-
         if (available) {
           const permission = await Pedometer.requestPermissionsAsync();
           setPermissionGranted(permission.granted);
@@ -66,9 +70,7 @@ export default function RootLayout() {
     // Routes where step counting should be paused
     const pauseRoutes = ['3']; // Adjust as needed
     const shouldCount = !pauseRoutes.includes(currentRoute);
-
     setIsCounting(shouldCount);
-
     if (isPedometerAvailable && permissionGranted) {
       try {
         if (shouldCount) {
@@ -82,7 +84,6 @@ export default function RootLayout() {
         console.error('Error managing step counter:', error);
       }
     }
-
     // Cleanup on unmount or route change
     return () => {
       try {
@@ -104,7 +105,7 @@ export default function RootLayout() {
   if (loading) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-        <ActivityIndicator size="large" />
+        <ActivityIndicator size="large" color="#0000ff" />
       </View>
     );
   }
