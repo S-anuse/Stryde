@@ -221,6 +221,11 @@ export default function ProfileScreen() {
     }
   };
 
+  // Navigate to Feedback screen
+  const handleFeedback = () => {
+    router.push('/feedback');
+  };
+
   // Updated CustomDropdown component using Modal for better visibility
   const CustomDropdown = ({ label, value, options, onSelect }: CustomDropdownProps) => {
     const [modalVisible, setModalVisible] = useState(false);
@@ -435,12 +440,20 @@ export default function ProfileScreen() {
             </TouchableOpacity>
           </View>
         ) : (
-          <TouchableOpacity 
-            style={[styles.button, styles.logoutButton]} 
-            onPress={handleLogout}
-          >
-            <Text style={styles.buttonText}>Log Out</Text>
-          </TouchableOpacity>
+          <View style={styles.buttonContainer}>
+            <TouchableOpacity 
+              style={[styles.button, styles.logoutButton]} 
+              onPress={handleLogout}
+            >
+              <Text style={styles.buttonText}>Log Out</Text>
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={[styles.button, styles.feedbackButton]} 
+              onPress={handleFeedback}
+            >
+              <Text style={styles.buttonText}>Give Feedback</Text>
+            </TouchableOpacity>
+          </View>
         )}
       </View>
     </ScrollView>
@@ -612,28 +625,26 @@ const styles = StyleSheet.create({
     color: '#ff4500',
   },
   buttonContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+    marginTop: 10,
   },
   button: {
     paddingVertical: 14,
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
+    marginBottom: 10,
   },
   saveButton: {
     backgroundColor: '#4CAF50',
-    flex: 1,
-    marginRight: 5,
   },
   cancelButton: {
     backgroundColor: '#9e9e9e',
-    flex: 1,
-    marginLeft: 5,
   },
   logoutButton: {
     backgroundColor: '#ff4500',
-    width: '100%',
+  },
+  feedbackButton: {
+    backgroundColor: '#007bff',
   },
   buttonText: {
     color: 'white',
