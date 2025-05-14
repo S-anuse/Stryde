@@ -18,9 +18,7 @@ const predefinedGoals = [
   { id: '7', title: 'Drink 3 liters of water daily', image: require('../../assets/drop.png') },
   { id: '8', title: 'Cycle 20 km weekly', image: require('../../assets/school.png') },
   { id: '9', title: 'Do 30 minutes of yoga daily', image: require('../../assets/lotus.png') },
-  { id: '10', title: 'Cut sugar intake by 50%', image: require('../../assets/diet.png') },
   { id: '11', title: 'Plank for 2 minutes daily', image: require('../../assets/plank.png') },
-  { id: '14', title: 'Reduce 5% body fat in 1 month', image: require('../../assets/body.png') },
   { id: '15', title: 'Hike 10 km every weekend', image: require('../../assets/hiking.png') },
 ];
 
