@@ -8,6 +8,7 @@
     "scheme": "stryde",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
+    "entryPoint": "node_modules/expo-router/entry", 
     "ios": {
       "supportsTablet": true
     },

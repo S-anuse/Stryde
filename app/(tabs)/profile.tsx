@@ -19,6 +19,7 @@ import { doc, getDoc, updateDoc, setDoc } from 'firebase/firestore';
 import * as ImagePicker from 'expo-image-picker';
 import { StatusBar } from 'expo-status-bar';
 import { MaterialIcons } from '@expo/vector-icons';
+import stepCounter from '@/services/stepCounter';
 
 const screenWidth = Dimensions.get('window').width;
 

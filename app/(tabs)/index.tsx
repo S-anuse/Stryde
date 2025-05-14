@@ -1,4 +1,4 @@
-import { StyleSheet, View, useColorScheme, Dimensions } from 'react-native';
+import { StyleSheet, View, useColorScheme, Dimensions, Pressable } from 'react-native';
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import { useEffect, useState, useCallback } from 'react';
@@ -8,6 +8,7 @@ import { db, auth } from '../../firebase';
 import { doc, getDoc, setDoc, onSnapshot, collection, query, orderBy, getDocs } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 import { LineChart } from 'react-native-chart-kit';
+import { useRouter } from 'expo-router'; // Import useRouter for navigation
 
 export default function ActivityScreen() {
   const [currentStepCount, setCurrentStepCount] = useState<number>(0);
@@ -21,6 +22,8 @@ export default function ActivityScreen() {
   const backgroundColor = colorScheme === 'dark' ? '#121212' : '#FFFFFF';
   const textColor = colorScheme === 'dark' ? '#FFFFFF' : '#000000';
   const cardBackground = colorScheme === 'dark' ? '#1E1E1E' : '#F8F8F8';
+
+  const router = useRouter(); // Initialize router for navigation
 
   // Initialize step counter with the user's data
   const initializeStepCounter = useCallback(async (uid: string) => {
@@ -65,14 +68,14 @@ export default function ActivityScreen() {
   // Load historical step data from Firestore
   const loadHistoricalSteps = async (uid: string) => {
     try {
-      const stepsCollection = collection(db, 'users', uid, 'step_data'); // Updated to correct collection name
+      const stepsCollection = collection(db, 'users', uid, 'step_data');
       const q = query(stepsCollection, orderBy('date', 'asc'));
       const querySnapshot = await getDocs(q);
       
       const stepsData: { date: string; steps: number }[] = [];
       querySnapshot.forEach((doc) => {
         const data = doc.data();
-        console.log('Fetched step data:', data); // Debug log
+        console.log('Fetched step data:', data);
         stepsData.push({
           date: data.date,
           steps: data.steps || 0,
@@ -81,13 +84,12 @@ export default function ActivityScreen() {
       
       if (stepsData.length === 0) {
         console.log('No historical step data found for user:', uid);
-        // Initialize with empty data for the last 7 days if none exists
         const today = new Date();
         const emptyData = Array.from({ length: 7 }, (_, i) => {
           const date = new Date(today);
           date.setDate(today.getDate() - (6 - i));
           return {
-            date: date.toISOString().split('T')[0], // Format: YYYY-MM-DD
+            date: date.toISOString().split('T')[0],
             steps: 0,
           };
         });
@@ -198,11 +200,11 @@ export default function ActivityScreen() {
 
   // Chart configuration
   const chartData = {
-    labels: historicalSteps.map((item) => item.date.split('-').slice(1).join('/')), // Format: MM/DD
+    labels: historicalSteps.map((item) => item.date.split('-').slice(1).join('/')),
     datasets: [
       {
         data: historicalSteps.map((item) => item.steps),
-        color: () => colorScheme === 'dark' ? '#00C4B4' : '#007AFF', // Line color
+        color: () => colorScheme === 'dark' ? '#00C4B4' : '#007AFF',
         strokeWidth: 2,
       },
     ],
@@ -232,6 +234,17 @@ export default function ActivityScreen() {
           <ThemedText style={[styles.errorText, { color: 'red' }]}>{error}</ThemedText>
         ) : (
           <View style={styles.content}>
+            {/* Add "Connect to a Device" Button */}
+            <Pressable
+              style={({ pressed }) => [
+                styles.connectButton,
+                { backgroundColor: pressed ? '#ff4500' : '#007AFF' },
+              ]}
+              onPress={() => router.push('/iot-demo')} // Navigate to iot-demo.tsx
+            >
+              <ThemedText style={styles.connectButtonText}>Connect to a Device</ThemedText>
+            </Pressable>
+
             {isShaking && (
               <View style={styles.shakeAlert}>
                 <ThemedText style={styles.shakeText}>Shaking detected - pausing step count</ThemedText>
@@ -260,13 +273,12 @@ export default function ActivityScreen() {
                 </ThemedText>
               </ThemedView>
 
-              {/* Historical Steps Chart */}
               <ThemedView style={[styles.chartCard, { backgroundColor: cardBackground }]}>
                 <ThemedText style={[styles.cardTitle, { color: textColor }]}>Step History (Last 7 Days)</ThemedText>
                 {historicalSteps.length > 0 ? (
                   <LineChart
                     data={chartData}
-                    width={Dimensions.get('window').width * 0.85} // Responsive width
+                    width={Dimensions.get('window').width * 0.85}
                     height={220}
                     yAxisSuffix=" steps"
                     chartConfig={chartConfig}
@@ -283,9 +295,7 @@ export default function ActivityScreen() {
                 )}
               </ThemedView>
 
-              <View style={styles.metricsRow}>
-                
-              </View>
+              <View style={styles.metricsRow}></View>
             </View>
           </View>
         )}
@@ -361,4 +371,18 @@ const styles = StyleSheet.create({
   },
   shakeText: { color: 'orange', textAlign: 'center', fontWeight: '500' },
   noDataText: { fontSize: 16, textAlign: 'center', marginVertical: 10 },
+  connectButton: { // Added styles for the button
+    paddingVertical: 10,
+    paddingHorizontal: 30,
+    borderRadius: 8,
+    marginBottom: 30,
+    marginLeft: 25,
+    alignItems: 'center',
+    width: '90%',
+  },
+  connectButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
 });
